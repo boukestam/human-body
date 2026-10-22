@@ -722,7 +722,7 @@ function buildXrayPanel() {
       <label class="chk"><input type="checkbox" id="x-inv" ${p.invert ? 'checked' : ''}/> Invert (negative)</label>
       <label class="chk"><input type="checkbox" id="x-hl" ${p.highlight ? 'checked' : ''}/> Highlight selection</label>
     </div>
-    <p class="muted" style="margin:10px 0 0;font-size:11.5px">Brightness is the simulated attenuation along each ray (Beer–Lambert law) through every visible layer. Toggle layers to change what is imaged; combine with Slice for tomography-style slabs.</p>`;
+    <p class="muted" style="margin:10px 0 0;font-size:11.5px">Brightness is the simulated attenuation along each ray (Beer–Lambert law) through every visible layer. Toggle layers to change what is imaged.</p>`;
   const bind = (id, key, out, fmt) => {
     const i = $(id);
     const upd = () => { p[key] = +i.value; $(out).textContent = fmt(p[key]); viewer.requestRender(); };
