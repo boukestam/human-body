@@ -9,6 +9,7 @@ import { setLayerOpacity, setColorScheme, getHighlight, clipPlanes, allMaterials
 import { LAYER_GROUPS, LAYER_COLORS, DEFAULT_VISIBLE, TISSUES, VIEW_PRESETS, MUSCLE_FUNCTION_COLORS } from './palette.js';
 import { getDescription } from './descriptions.js';
 import { buildTree } from './tree.js';
+import { createSheet, desktopMQ } from './sheet.js';
 
 const $ = (sel) => document.querySelector(sel);
 const el = (tag, cls, html) => { const e = document.createElement(tag); if (cls) e.className = cls; if (html != null) e.innerHTML = html; return e; };
@@ -75,7 +76,8 @@ async function init() {
   $('#loading').classList.add('hidden');
   viewer.requestRender();
   applyHash();
-  for (const k of order.filter((k) => !DEFAULT_VISIBLE.has(k))) await loadOne(k);
+  // Phones load hidden layers on demand to save data and memory.
+  if (desktopMQ.matches) for (const k of order.filter((k) => !DEFAULT_VISIBLE.has(k))) await loadOne(k);
   void done;
 }
 
@@ -230,7 +232,7 @@ function select(structures, { add = false, focus = false, point = null } = {}) {
   if (state.selection.length === 1) tree.reveal(state.selection[0]);
   updateHash();
   if (focus && state.selection.length) focusSelection();
-  if (focus) $('#left').classList.remove('open');
+  if (state.selection.length) showInfoTab();
 }
 
 function selectGroup(path) {
@@ -247,6 +249,7 @@ function selectGroup(path) {
   afterVisibilityChange();
   updateHash();
   focusSelection();
+  showInfoTab();
 }
 
 function focusSelection() {
@@ -299,10 +302,19 @@ function renderInfo() {
   const right = $('#right');
   const info = $('#info');
   const sel = state.selection;
-  if (!sel.length) { right.classList.add('hidden'); viewer.resize(); return; }
+  const tabBtn = $('#tab-info-btn');
+  if (!sel.length) {
+    const wasShown = !right.classList.contains('hidden');
+    right.classList.add('hidden');
+    tabBtn.classList.remove('has-dot');
+    info.innerHTML = '<div class="empty">Tap any structure, or search for one, to see its details here.</div>';
+    if (wasShown) requestAnimationFrame(() => viewer.resize());
+    return;
+  }
+  tabBtn.classList.add('has-dot');
   const wasHidden = right.classList.contains('hidden');
   right.classList.remove('hidden');
-  if (wasHidden) requestAnimationFrame(() => viewer.resize());
+  if (wasHidden && desktopMQ.matches) requestAnimationFrame(() => viewer.resize());
   const group = state.selectedGroup;
   const single = sel.length === 1 ? sel[0] : null;
   const title = group ? group[group.length - 1] : single ? single.label : `${sel.length} structures`;
@@ -401,7 +413,7 @@ let searchActive = 0;
 function runSearch() {
   const q = searchInput.value.trim().toLowerCase();
   const box = $('#search-results');
-  const tabs = ['#tab-layers', '#tab-tree'];
+  const tabs = ['#tab-layers', '#tab-tree', '#tab-info'];
   if (!q) {
     box.classList.add('hidden');
     $('#left-tabs').classList.remove('hidden');
@@ -441,6 +453,7 @@ function runSearch() {
   });
 }
 searchInput.addEventListener('input', () => { searchActive = 0; runSearch(); });
+searchInput.addEventListener('focus', () => sheet.setSnap('full'));
 searchInput.addEventListener('keydown', (e) => {
   const items = [...document.querySelectorAll('#search-results .result')];
   if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
@@ -457,31 +470,88 @@ searchInput.addEventListener('keydown', (e) => {
   }
 });
 
+function showTab(tab) {
+  document.querySelectorAll('#left-tabs button').forEach((x) => x.classList.toggle('active', x.dataset.tab === tab));
+  for (const t of ['layers', 'tree', 'info']) $(`#tab-${t}`).classList.toggle('hidden', t !== tab);
+  if (tab === 'tree' && state.selection.length === 1) tree.reveal(state.selection[0]);
+}
 document.querySelectorAll('#left-tabs button').forEach((b) => {
   b.onclick = () => {
-    document.querySelectorAll('#left-tabs button').forEach((x) => x.classList.toggle('active', x === b));
-    $('#tab-layers').classList.toggle('hidden', b.dataset.tab !== 'layers');
-    $('#tab-tree').classList.toggle('hidden', b.dataset.tab !== 'tree');
-    if (b.dataset.tab === 'tree' && state.selection.length === 1) tree.reveal(state.selection[0]);
+    showTab(b.dataset.tab);
+    sheet.expandAtLeast('half');
   };
 });
+
+// On phones the details live in the sheet's Info tab; on desktop in the right panel.
+function placeInfo() {
+  const info = $('#info');
+  const host = desktopMQ.matches ? $('#right') : $('#tab-info');
+  if (info.parentElement !== host) host.append(info);
+  if (desktopMQ.matches && $('#left-tabs .active')?.dataset.tab === 'info') showTab('layers');
+}
+desktopMQ.addEventListener('change', placeInfo);
+placeInfo();
+
+function showInfoTab() {
+  if (desktopMQ.matches) return;
+  if (searchInput.value) { searchInput.value = ''; runSearch(); }
+  searchInput.blur();
+  showTab('info');
+  // In slice mode the 2D section sits above the sheet, so keep the sheet low.
+  if (state.mode === 'slice') return;
+  if (sheet.snap === 'full') sheet.setSnap('half');
+  else sheet.expandAtLeast('half');
+}
+
+const sheet = createSheet({
+  app: $('#app'),
+  sheet: $('#left'),
+  dragZones: [$('#sheet-handle'), $('#left-tabs')],
+  onChange: (px) => {
+    viewer.showHelper = desktopMQ.matches;
+    viewer.setBottomInset(px);
+  },
+});
+viewer.camera.position.copy(viewer.homePosition());
 
 // ---------------------------------------------------------------- picking & hover
 const canvas = viewer.renderer.domElement;
 let down = null;
 let hoverTimer = 0;
-canvas.addEventListener('pointerdown', (e) => { down = { x: e.clientX, y: e.clientY, t: performance.now() }; });
+let activePointers = 0;
+let lastPointerType = 'mouse';
+let lastTap = null;
+canvas.addEventListener('pointerdown', (e) => {
+  activePointers++;
+  lastPointerType = e.pointerType;
+  closePopovers();
+  down = activePointers === 1 ? { x: e.clientX, y: e.clientY, t: performance.now() } : null;
+});
+const pointerEnd = () => { activePointers = Math.max(0, activePointers - 1); };
+canvas.addEventListener('pointercancel', () => { pointerEnd(); down = null; });
 canvas.addEventListener('pointerup', (e) => {
+  pointerEnd();
   if (!down) return;
-  const moved = Math.hypot(e.clientX - down.x, e.clientY - down.y) > 4;
+  const tol = e.pointerType === 'touch' ? 10 : 4;
+  const moved = Math.hypot(e.clientX - down.x, e.clientY - down.y) > tol;
+  const long = performance.now() - down.t > 600;
   down = null;
-  if (moved || e.button !== 0) return;
-  if (viewer.viewHelper.handleClick(e)) return;
+  if (moved || long || e.button !== 0) return;
+  if (desktopMQ.matches && viewer.viewHelper.handleClick(e)) return;
+  // Touch double-tap focuses the structure, like double-click with a mouse.
+  const now = performance.now();
+  if (e.pointerType !== 'mouse' && lastTap && now - lastTap.t < 320 && Math.hypot(e.clientX - lastTap.x, e.clientY - lastTap.y) < 30) {
+    lastTap = null;
+    focusAt(e);
+    return;
+  }
+  lastTap = { t: now, x: e.clientX, y: e.clientY };
   const hit = viewer.pick(e.clientX, e.clientY, model.visibleMeshes(), clipPlanes);
   if (hit) select([hit.object.userData.structure], { add: e.shiftKey, point: hit.point.clone() });
   else if (!e.shiftKey) clearSelection();
 });
-canvas.addEventListener('dblclick', (e) => {
+canvas.addEventListener('dblclick', (e) => { if (lastPointerType === 'mouse') focusAt(e); });
+function focusAt(e) {
   const hit = viewer.pick(e.clientX, e.clientY, model.visibleMeshes(), clipPlanes);
   if (hit) {
     select([hit.object.userData.structure], { point: hit.point.clone() });
@@ -491,8 +561,9 @@ canvas.addEventListener('dblclick', (e) => {
     const dir = viewer.camera.position.clone().sub(viewer.controls.target).normalize();
     viewer.flyTo(hit.point, hit.point.clone().addScaledVector(dir, Math.max(size * 1.4, 12)));
   }
-});
+}
 canvas.addEventListener('pointermove', (e) => {
+  if (e.pointerType !== 'mouse') return;
   if (e.buttons) { hideTooltip(); return; }
   clearTimeout(hoverTimer);
   hoverTimer = setTimeout(() => doHover(e), 40);
@@ -593,8 +664,13 @@ document.querySelectorAll('#view-bar [data-view]').forEach((b) => {
 
 let renderStyle = 'solid';
 let styleSaved = null;
-$('#render-style').addEventListener('change', (e) => {
-  const style = e.target.value;
+document.querySelectorAll('#render-style-seg button').forEach((b) => {
+  b.onclick = () => {
+    document.querySelectorAll('#render-style-seg button').forEach((x) => x.classList.toggle('active', x === b));
+    setRenderStyle(b.dataset.style);
+  };
+});
+function setRenderStyle(style) {
   if (renderStyle === 'glass' && styleSaved) {
     for (const [k, v] of Object.entries(styleSaved)) setLayerOpacityUI(k, v);
     styleSaved = null;
@@ -606,10 +682,13 @@ $('#render-style').addEventListener('change', (e) => {
     for (const k of Object.keys(model.layers)) setLayerOpacityUI(k, ['skeleton', 'heart', 'cns'].includes(k) ? 0.55 : 0.22);
   }
   viewer.requestRender();
-});
+}
 
 // ---------------------------------------------------------------- modes
 const modePanel = $('#mode-panel');
+modePanel.addEventListener('click', (e) => {
+  if (e.target.closest('h4') && !desktopMQ.matches) modePanel.classList.toggle('expanded');
+});
 let savedLayers = null;
 
 function setMode(mode) {
@@ -677,9 +756,9 @@ function buildSlicePanel() {
     </div></div>
     <div class="ctl"><label>Position <span id="slice-pos-val"></span></label>
       <input type="range" id="slice-pos" min="${a}" max="${b}" step="0.1" value="${slice.position}" /></div>
-    <div class="ctl"><label>Slab thickness <span id="slab-val">${slice.slab ? slice.slab.toFixed(1) + ' cm' : 'off'}</span></label>
+    <div class="ctl adv"><label>Slab thickness <span id="slab-val">${slice.slab ? slice.slab.toFixed(1) + ' cm' : 'off'}</span></label>
       <input type="range" id="slice-slab" min="0" max="20" step="0.25" value="${slice.slab}" /></div>
-    <div class="row">
+    <div class="row adv">
       <label class="chk"><input type="checkbox" id="slice-flip" ${slice.flip ? 'checked' : ''}/> Flip side</label>
       <label class="chk"><input type="checkbox" id="slice-plane" ${slice.showPlane ? 'checked' : ''}/> Show plane</label>
     </div>
@@ -716,13 +795,13 @@ function buildXrayPanel() {
   modePanel.innerHTML = `
     <h4>X-ray</h4>
     <div class="ctl"><label>Exposure <span id="xv-exp"></span></label><input type="range" id="x-exp" min="0.01" max="0.2" step="0.001" value="${p.exposure}" /></div>
-    <div class="ctl"><label>Contrast <span id="xv-con"></span></label><input type="range" id="x-con" min="0.6" max="3" step="0.01" value="${p.contrast}" /></div>
-    <div class="ctl"><label>Edge enhancement <span id="xv-sh"></span></label><input type="range" id="x-sh" min="0" max="3" step="0.01" value="${p.sharpen}" /></div>
-    <div class="row">
+    <div class="ctl adv"><label>Contrast <span id="xv-con"></span></label><input type="range" id="x-con" min="0.6" max="3" step="0.01" value="${p.contrast}" /></div>
+    <div class="ctl adv"><label>Edge enhancement <span id="xv-sh"></span></label><input type="range" id="x-sh" min="0" max="3" step="0.01" value="${p.sharpen}" /></div>
+    <div class="row adv">
       <label class="chk"><input type="checkbox" id="x-inv" ${p.invert ? 'checked' : ''}/> Invert (negative)</label>
       <label class="chk"><input type="checkbox" id="x-hl" ${p.highlight ? 'checked' : ''}/> Highlight selection</label>
     </div>
-    <p class="muted" style="margin:10px 0 0;font-size:11.5px">Brightness is the simulated attenuation along each ray (Beer–Lambert law) through every visible layer. Toggle layers to change what is imaged.</p>`;
+    <p class="muted adv">Brightness is the simulated attenuation along each ray (Beer–Lambert law) through every visible layer. Toggle layers to change what is imaged.</p>`;
   const bind = (id, key, out, fmt) => {
     const i = $(id);
     const upd = () => { p[key] = +i.value; $(out).textContent = fmt(p[key]); viewer.requestRender(); };
@@ -764,7 +843,22 @@ $('#btn-screenshot').addEventListener('click', () => {
 $('#btn-help').addEventListener('click', () => $('#help').classList.remove('hidden'));
 $('#help-close').addEventListener('click', () => $('#help').classList.add('hidden'));
 $('#help').addEventListener('click', (e) => { if (e.target.id === 'help') $('#help').classList.add('hidden'); });
-$('#toggle-left').addEventListener('click', () => $('#left').classList.toggle('open'));
+function closePopovers(except) {
+  for (const id of ['#menu', '#view-bar']) if (id !== except) $(id).classList.add('hidden');
+  $('#fab-view').classList.toggle('active', except === '#view-bar');
+}
+const togglePopover = (id) => {
+  const open = $(id).classList.contains('hidden');
+  closePopovers(open ? id : undefined);
+  $(id).classList.toggle('hidden', !open);
+};
+$('#btn-menu').addEventListener('click', (e) => { e.stopPropagation(); togglePopover('#menu'); });
+$('#fab-view').addEventListener('click', (e) => { e.stopPropagation(); togglePopover('#view-bar'); });
+$('#fab-reset').addEventListener('click', () => { closePopovers(); viewer.resetView(); });
+$('#btn-search').addEventListener('click', () => { showTab($('#left-tabs .active')?.dataset.tab || 'layers'); searchInput.focus(); });
+document.addEventListener('pointerdown', (e) => {
+  if (!e.target.closest('.popover, #btn-menu, #fab-view')) closePopovers();
+});
 
 window.addEventListener('keydown', (e) => {
   if (e.target.matches('input[type=search], input[type=text]')) return;

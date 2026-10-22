@@ -172,8 +172,36 @@ export class SectionView {
       this.view.cy = wy - (wy - this.view.cy) / f;
       this.draw();
     }, { passive: false });
-    c.addEventListener('pointerdown', (e) => { drag = { x: e.offsetX, y: e.offsetY, moved: false }; c.setPointerCapture(e.pointerId); });
+    // Touch: one finger pans, two fingers pinch-zoom, a tap selects.
+    const pts = new Map();
+    let pinch = null;
+    const zoomAt = (sx, sy, f) => {
+      const [wx, wy] = this.toWorld(sx, sy);
+      this.view.scale *= f;
+      this.view.cx = wx - (wx - this.view.cx) / f;
+      this.view.cy = wy - (wy - this.view.cy) / f;
+    };
+    const pinchState = () => {
+      const [a, b] = [...pts.values()];
+      return { d: Math.hypot(a.x - b.x, a.y - b.y), x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
+    };
+    c.addEventListener('pointerdown', (e) => {
+      pts.set(e.pointerId, { x: e.offsetX, y: e.offsetY });
+      c.setPointerCapture(e.pointerId);
+      if (pts.size === 2) { pinch = pinchState(); drag = null; }
+      else if (pts.size === 1) drag = { x: e.offsetX, y: e.offsetY, moved: false };
+    });
     c.addEventListener('pointermove', (e) => {
+      if (pts.has(e.pointerId)) pts.set(e.pointerId, { x: e.offsetX, y: e.offsetY });
+      if (pinch && pts.size === 2) {
+        const p = pinchState();
+        zoomAt(p.x, p.y, p.d / Math.max(1, pinch.d));
+        this.view.cx -= (p.x - pinch.x) / this.view.scale;
+        this.view.cy += (p.y - pinch.y) / this.view.scale;
+        pinch = p;
+        this.draw();
+        return;
+      }
       if (drag) {
         const dx = e.offsetX - drag.x, dy = e.offsetY - drag.y;
         if (Math.abs(dx) + Math.abs(dy) > 2) drag.moved = true;
@@ -185,6 +213,7 @@ export class SectionView {
           return;
         }
       }
+      if (e.pointerType !== 'mouse') return;
       const it = this.hitTest(e.offsetX, e.offsetY);
       if (it !== this.hover) {
         this.hover = it;
@@ -192,11 +221,19 @@ export class SectionView {
       }
       this.onHover?.(it, e);
     });
-    c.addEventListener('pointerup', (e) => {
-      if (drag && !drag.moved) this.onPick?.(this.hitTest(e.offsetX, e.offsetY), e);
+    const up = (e) => {
+      pts.delete(e.pointerId);
+      if (pts.size < 2) pinch = null;
+      if (drag && !drag.moved && e.type === 'pointerup') {
+        const it = this.hitTest(e.offsetX, e.offsetY);
+        if (e.pointerType !== 'mouse') { this.hover = it; this.onHover?.(it, e); this.draw(); }
+        this.onPick?.(it, e);
+      }
       drag = null;
-    });
-    c.addEventListener('pointerleave', () => { this.hover = null; this.onHover?.(null); this.draw(); });
+    };
+    c.addEventListener('pointerup', up);
+    c.addEventListener('pointercancel', up);
+    c.addEventListener('pointerleave', (e) => { if (e.pointerType !== 'mouse') return; this.hover = null; this.onHover?.(null); this.draw(); });
     c.addEventListener('dblclick', () => { this.fitKey = ''; this.fit(); this.draw(); });
     new ResizeObserver(() => this.draw()).observe(c);
   }

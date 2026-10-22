@@ -10,7 +10,9 @@ export class Viewer {
   constructor(container) {
     this.container = container;
     const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false, powerPreference: 'high-performance' });
-    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    // Touch devices get a lower pixel-ratio cap: fill rate is the bottleneck on phones.
+    this.coarse = window.matchMedia('(pointer: coarse)').matches;
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, this.coarse ? 1.5 : 2));
     renderer.outputColorSpace = THREE.SRGBColorSpace;
     renderer.toneMapping = THREE.ACESFilmicToneMapping;
     renderer.toneMappingExposure = 1.05;
@@ -61,6 +63,8 @@ export class Viewer {
     this.renderOverride = null;
     this.timer = new THREE.Timer();
     this.anim = null;
+    this.bottomInset = 0;
+    this.showHelper = true;
 
     new ResizeObserver(() => this.resize()).observe(container);
     this.resize();
@@ -72,9 +76,18 @@ export class Viewer {
     if (!w || !h) return;
     this.renderer.setSize(w, h);
     this.camera.aspect = w / h;
+    // Keep the model centred in the part of the canvas not covered by the bottom sheet.
+    const shift = Math.min(this.bottomInset, h * 0.55) / 2;
+    if (shift > 0) this.camera.setViewOffset(w, h, 0, shift, w, h);
+    else this.camera.clearViewOffset();
     this.camera.updateProjectionMatrix();
     this.renderHooks.forEach((f) => f.resize?.(w, h));
     this.requestRender();
+  }
+
+  setBottomInset(px) {
+    this.bottomInset = px;
+    this.resize();
   }
 
   requestRender() {
@@ -103,7 +116,7 @@ export class Viewer {
     if (this.renderOverride) this.renderOverride(r, this.scene, this.camera);
     else r.render(this.scene, this.camera);
     for (const h of this.renderHooks) h.afterRender?.();
-    this.viewHelper.render(r);
+    if (this.showHelper) this.viewHelper.render(r);
   }
 
   // Smooth camera transitions.
@@ -146,8 +159,14 @@ export class Viewer {
     this.flyTo(target, target.clone().addScaledVector(d, dist));
   }
 
+  homePosition() {
+    const h = this.container.clientHeight || 1;
+    const frac = Math.max(0.55, (h - Math.min(this.bottomInset, h * 0.55)) / h);
+    return HOME.clone().sub(BODY_CENTER).multiplyScalar(1 / frac).add(BODY_CENTER);
+  }
+
   resetView() {
-    this.flyTo(BODY_CENTER, HOME);
+    this.flyTo(BODY_CENTER, this.homePosition());
   }
 
   pick(clientX, clientY, meshes, clipPlanes = []) {

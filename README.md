@@ -22,6 +22,7 @@ anatomical structures, organised into toggleable layers, with free-orbit, X-ray 
   - *Slice*: transverse (axial / horizontal), coronal and sagittal (vertical) cutting planes with solid cut surfaces
     in 3D, an optional slab thickness, and a live 2D cross-section computed exactly from the meshes, shown in atlas,
     CT or MRI (T1) style with labels, hover identification and the vertebral level.
+- **Mobile-first interface** – full-screen 3D view with a draggable bottom sheet (layers, anatomy tree, details), touch gestures (tap to select, double-tap to zoom, pinch/pan in the 2D section), and a sidebar layout on desktop.
 - **Search** across all structures and groups, selection with descriptions (from Wikipedia), focus, hide, isolate,
   fade-others, jump to the opposite side, colour schemes (realistic, by system, muscles by action).
 
