@@ -88,7 +88,7 @@ export class XRay {
           vec4 acc = texture2D(tAcc, uv);
           vec2 h = texture2D(tHull, uv).rg;
           float span = h.r > 0.0 ? max(h.r + h.g - ${(2 * HULL_OFFSET).toFixed(1)}, 0.0) : 0.0;
-          float skin = acc.b > 0.35 * span ? min(acc.b, span) : span;
+          float skin = acc.b > 0.6 * span ? min(acc.b, span) : span;
           return max(acc.r + skin * uSkin, 0.0);
         }
         float film(vec2 uv) {

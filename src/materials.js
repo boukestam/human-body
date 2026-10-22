@@ -49,7 +49,7 @@ if (!gl_FrontFacing) {
     outgoingLight = mix(diffuseColor.rgb * 0.82, uHighlight.rgb, uHighlight.a * 0.7) * (0.96 + grain * 0.06);
     diffuseColor.a = 1.0;
   } else {
-    outgoingLight *= 0.55;
+    outgoingLight *= 0.8;
   }
 }
 gl_FragColor = vec4(outgoingLight, diffuseColor.a);`);
@@ -147,7 +147,7 @@ export function getHighlight(material, kind) {
   h = material.clone();
   h.userData = { ...material.userData, source: material, highlightUniform: { value: new THREE.Vector4() } };
   const v = h.userData.highlightUniform.value;
-  if (kind === 'select') v.set(0.15, 0.85, 1.0, 0.42);
+  if (kind === 'select') v.set(0.1, 0.78, 1.0, 0.5);
   else if (kind === 'hover') v.set(1.0, 0.95, 0.55, 0.22);
   else v.set(0, 0, 0, 0);
   h.clippingPlanes = clipPlanes;

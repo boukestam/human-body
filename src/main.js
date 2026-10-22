@@ -74,6 +74,7 @@ async function init() {
   computeBounds();
   $('#loading').classList.add('hidden');
   viewer.requestRender();
+  applyHash();
   for (const k of order.filter((k) => !DEFAULT_VISIBLE.has(k))) await loadOne(k);
   void done;
 }
@@ -166,6 +167,7 @@ function setLayerOpacityUI(k, v) {
 }
 
 function afterVisibilityChange() {
+  hideTooltip();
   tree.refresh();
   if (slice.enabled) slice.recomputeSection();
   viewer.requestRender();
@@ -207,6 +209,7 @@ function refreshHighlights() {
 
 function select(structures, { add = false, focus = false, point = null } = {}) {
   structures = structures.filter(Boolean);
+  hideTooltip();
   if (add) {
     const set = new Set(state.selection);
     for (const s of structures) set.has(s) ? set.delete(s) : set.add(s);
@@ -225,6 +228,7 @@ function select(structures, { add = false, focus = false, point = null } = {}) {
   renderInfo();
   tree.refresh();
   if (state.selection.length === 1) tree.reveal(state.selection[0]);
+  updateHash();
   if (focus && state.selection.length) focusSelection();
   if (focus) $('#left').classList.remove('open');
 }
@@ -241,6 +245,8 @@ function selectGroup(path) {
   renderInfo();
   tree.refresh();
   afterVisibilityChange();
+  updateHash();
+  focusSelection();
 }
 
 function focusSelection() {
@@ -251,12 +257,14 @@ function focusSelection() {
 }
 
 function clearSelection() {
+  hideTooltip();
   state.selection = [];
   state.selectedGroup = null;
   state.selectionPoint = null;
   refreshHighlights();
   renderInfo();
   tree.refresh();
+  updateHash();
 }
 
 function hideSelection() {
@@ -538,6 +546,30 @@ viewer.renderHooks.push({
     pin.style.top = `${sp.y}px`;
   },
 });
+
+// ---------------------------------------------------------------- deep links
+function updateHash() {
+  const sel = state.selection;
+  const h = state.selectedGroup ? 'group=' + encodeURIComponent(state.selectedGroup.join('/'))
+    : sel.length === 1 ? 's=' + encodeURIComponent(sel[0].label) : '';
+  history.replaceState(null, '', h ? '#' + h : location.pathname + location.search);
+}
+
+async function applyHash() {
+  const p = new URLSearchParams(location.hash.slice(1));
+  if (p.get('s')) {
+    const s = model.structures.find((x) => x && x.label === p.get('s'));
+    if (s) {
+      await model.loadLayer(s.layer).then(() => onLayerLoaded(s.layer));
+      select([s], { focus: true });
+    }
+  } else if (p.get('group')) {
+    const path = p.get('group').split('/');
+    const list = model.structuresUnder(path);
+    await Promise.all([...new Set(list.map((s) => s.layer))].map((k) => model.loadLayer(k).then(() => onLayerLoaded(k))));
+    selectGroup(path);
+  }
+}
 
 // ---------------------------------------------------------------- explode
 function applyExplode() {

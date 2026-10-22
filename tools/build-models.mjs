@@ -385,12 +385,11 @@ function readDesc(name) {
   let url = null;
   const paras = [];
   let cur = [];
-  let first = true;
   for (const l of lines) {
     if (/^https?:\/\//.test(l)) { url = l; continue; }
     if (!l) { if (cur.length) { paras.push(cur.join(' ')); cur = []; } continue; }
-    if (first && l === l.toUpperCase() && /[A-Z]/.test(l)) { first = false; continue; }
-    first = false;
+    if (l.startsWith('!')) continue;
+    if (l === l.toUpperCase() && /[A-Z]/.test(l) && l.length < 90) continue;
     cur.push(l);
   }
   if (cur.length) paras.push(cur.join(' '));
