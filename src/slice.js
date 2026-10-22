@@ -116,7 +116,11 @@ export class SliceController {
 
   recomputeSection() {
     if (!this.enabled) return;
-    const items = computeSection(this.model.visibleMeshes(), this.axis, this.position);
+    // The skin outline is always used for the body silhouette, even when hidden.
+    const hull = [];
+    const skin = this.model.layers.skin;
+    if (skin?.loaded) for (const s of skin.structures) for (const m of s.meshes) if (m.userData.tissue === 'skin') hull.push(m);
+    const items = computeSection(this.model.visibleMeshes(), this.axis, this.position, hull);
     this.section.setItems(items, this.axis);
   }
 

@@ -19,7 +19,7 @@
         <span>Human Body Atlas</span>
       </div>
       <nav class="modes" id="modes">
-        <button data-mode="normal" class="active" title="Free 3D orbit view (1)">3D Anatomy</button>
+        <button data-mode="normal" class="active" title="Free 3D orbit view (1)">3D<span class="long"> Anatomy</span></button>
         <button data-mode="xray" title="Simulated radiograph (2)">X-ray</button>
         <button data-mode="slice" title="Cross-section / slice view (3)">Slice</button>
       </nav>
@@ -65,6 +65,11 @@
         <button data-view="inferior" title="Inferior view">Bottom</button>
         <button data-view="reset" title="Reset camera (R)">⟲</button>
         <span class="sep"></span>
+        <select id="render-style" title="Render style">
+          <option value="solid">Solid</option>
+          <option value="glass">Glass</option>
+          <option value="wireframe">Wireframe</option>
+        </select>
         <label class="explode" title="Exploded view">Explode
           <input type="range" id="explode" min="0" max="1" step="0.01" value="0" />
         </label>

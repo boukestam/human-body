@@ -11,7 +11,9 @@ export const AXES = {
   sagittal: { normal: new THREE.Vector3(1, 0, 0), u: new THREE.Vector3(0, 0, -1), v: new THREE.Vector3(0, 1, 0), label: 'Sagittal' },
 };
 
-export function computeSection(meshes, axisKey, position) {
+export function computeSection(meshes, axisKey, position, hullMeshes = []) {
+  const set = new Set(meshes);
+  for (const m of hullMeshes) if (!set.has(m)) meshes.push(m);
   const axis = AXES[axisKey];
   const n = axis.normal, U = axis.u, V = axis.v;
   const comp = n.x ? 'x' : n.y ? 'y' : 'z';

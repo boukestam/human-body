@@ -11,6 +11,12 @@ export const clipPlanes = [];
 const cache = new Map();
 const highlightCache = new Map();
 let colorScheme = 'realistic';
+let wireframe = false;
+
+export function setWireframe(on) {
+  wireframe = on;
+  for (const m of allMaterials()) m.wireframe = on;
+}
 
 function nameColor(name) {
   for (const [re, c] of NAME_COLORS) if (re.test(name)) return c;
@@ -87,6 +93,7 @@ export function getMaterial(layer, tissue, structure) {
     metalness: 0,
     side: THREE.DoubleSide,
     clippingPlanes: clipPlanes,
+    wireframe,
   });
   m.userData = {
     layer, tissue, override, fn, vary,

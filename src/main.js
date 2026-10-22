@@ -5,7 +5,7 @@ import { AnatomyModel } from './model.js';
 import { XRay } from './xray.js';
 import { SectionView, AXES } from './section.js';
 import { SliceController } from './slice.js';
-import { setLayerOpacity, setColorScheme, getHighlight, clipPlanes, allMaterials } from './materials.js';
+import { setLayerOpacity, setColorScheme, getHighlight, clipPlanes, allMaterials, setWireframe } from './materials.js';
 import { LAYER_GROUPS, LAYER_COLORS, DEFAULT_VISIBLE, TISSUES, VIEW_PRESETS, MUSCLE_FUNCTION_COLORS } from './palette.js';
 import { getDescription } from './descriptions.js';
 import { buildTree } from './tree.js';
@@ -226,6 +226,7 @@ function select(structures, { add = false, focus = false, point = null } = {}) {
   tree.refresh();
   if (state.selection.length === 1) tree.reveal(state.selection[0]);
   if (focus && state.selection.length) focusSelection();
+  if (focus) $('#left').classList.remove('open');
 }
 
 function selectGroup(path) {
@@ -453,6 +454,7 @@ document.querySelectorAll('#left-tabs button').forEach((b) => {
     document.querySelectorAll('#left-tabs button').forEach((x) => x.classList.toggle('active', x === b));
     $('#tab-layers').classList.toggle('hidden', b.dataset.tab !== 'layers');
     $('#tab-tree').classList.toggle('hidden', b.dataset.tab !== 'tree');
+    if (b.dataset.tab === 'tree' && state.selection.length === 1) tree.reveal(state.selection[0]);
   };
 });
 
@@ -557,6 +559,23 @@ document.querySelectorAll('#view-bar [data-view]').forEach((b) => {
   b.onclick = () => (b.dataset.view === 'reset' ? viewer.resetView() : viewer.setView(b.dataset.view));
 });
 
+let renderStyle = 'solid';
+let styleSaved = null;
+$('#render-style').addEventListener('change', (e) => {
+  const style = e.target.value;
+  if (renderStyle === 'glass' && styleSaved) {
+    for (const [k, v] of Object.entries(styleSaved)) setLayerOpacityUI(k, v);
+    styleSaved = null;
+  }
+  renderStyle = style;
+  setWireframe(style === 'wireframe');
+  if (style === 'glass') {
+    styleSaved = Object.fromEntries(Object.keys(model.layers).map((k) => [k, model.layers[k].opacity]));
+    for (const k of Object.keys(model.layers)) setLayerOpacityUI(k, ['skeleton', 'heart', 'cns'].includes(k) ? 0.55 : 0.22);
+  }
+  viewer.requestRender();
+});
+
 // ---------------------------------------------------------------- modes
 const modePanel = $('#mode-panel');
 let savedLayers = null;
@@ -634,6 +653,7 @@ function buildSlicePanel() {
     </div>
     <div class="level" id="slice-level"></div>`;
   const posInput = $('#slice-pos');
+  $('#section-dock').classList.toggle('portrait', slice.axis !== 'transverse');
   const updateLabels = () => {
     $('#slice-pos-val').textContent = slice.position.toFixed(1) + ' cm';
     $('#slice-level').textContent = slice.vertebralLevel();

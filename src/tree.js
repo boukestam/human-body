@@ -1,5 +1,8 @@
 import { LAYER_COLORS } from './palette.js';
 
+const SYSTEM_ORDER = ['Integumentary system', 'Skeletal system', 'Articular system', 'Muscular system', 'Cardiovascular system',
+  'Nervous system', 'Visceral systems', 'Lymphoid system', 'Anatomical references'];
+
 const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 
 // Hierarchical anatomy browser (system › region › structure), rendered lazily.
@@ -20,7 +23,6 @@ export function buildTree(host, model, { onSelectStructure, onSelectGroup, onTog
       }
       node.structures.push(s);
     }
-    for (const c of root.children.values()) open.add(key(c.path));
     render();
   }
 
@@ -33,7 +35,8 @@ export function buildTree(host, model, { onSelectStructure, onSelectGroup, onTog
   }
 
   function renderNode(node, container) {
-    const kids = [...node.children.values()].sort((a, b) => a.name.localeCompare(b.name));
+    const rank = (n) => (node === root ? SYSTEM_ORDER.indexOf(n.name) : 0);
+    const kids = [...node.children.values()].sort((a, b) => rank(a) - rank(b) || a.name.localeCompare(b.name));
     for (const c of kids) {
       const row = document.createElement('div');
       row.className = 'tree-row';
