@@ -1,0 +1,122 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Human Body Atlas</title>
+  <meta name="description" content="Interactive 3D atlas of the complete human body: bones, muscles, organs, vessels, nerves and more, with X-ray and cross-section views." />
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Ccircle cx='32' cy='12' r='8' fill='%2338d0ff'/%3E%3Cpath d='M20 24h24l-4 18h-4l-2 18h-4l-2-18h-4z' fill='%2338d0ff'/%3E%3C/svg%3E" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
+</head>
+<body>
+  <div id="app">
+    <header id="topbar">
+      <button class="icon-btn only-mobile" id="toggle-left" title="Layers">☰</button>
+      <div class="brand">
+        <svg viewBox="0 0 64 64" width="22" height="22"><circle cx="32" cy="11" r="8" fill="currentColor"/><path d="M19 23h26l-4 19h-4l-2 18h-4l-2-18h-4z" fill="currentColor" opacity=".85"/></svg>
+        <span>Human Body Atlas</span>
+      </div>
+      <nav class="modes" id="modes">
+        <button data-mode="normal" class="active" title="Free 3D orbit view (1)">3D Anatomy</button>
+        <button data-mode="xray" title="Simulated radiograph (2)">X-ray</button>
+        <button data-mode="slice" title="Cross-section / slice view (3)">Slice</button>
+      </nav>
+      <div class="top-tools">
+        <label class="select-wrap" title="Colour scheme">
+          <select id="color-scheme">
+            <option value="realistic">Realistic colours</option>
+            <option value="systems">Colour by system</option>
+            <option value="function">Muscles by function</option>
+          </select>
+        </label>
+        <button class="icon-btn" id="btn-screenshot" title="Save screenshot">⤓</button>
+        <button class="icon-btn" id="btn-help" title="Help & credits">?</button>
+      </div>
+    </header>
+
+    <aside id="left">
+      <div class="search">
+        <input id="search" type="search" placeholder="Search 3,600+ structures…" autocomplete="off" spellcheck="false" />
+      </div>
+      <div class="tabs" id="left-tabs">
+        <button data-tab="layers" class="active">Layers</button>
+        <button data-tab="tree">Anatomy tree</button>
+      </div>
+      <div class="panel-body" id="tab-layers"></div>
+      <div class="panel-body hidden" id="tab-tree"></div>
+      <div class="panel-body hidden" id="search-results"></div>
+    </aside>
+
+    <main id="stage">
+      <div id="canvas-host"></div>
+      <div id="labels"></div>
+      <div id="tooltip" class="hidden"></div>
+
+      <div id="mode-panel" class="floating hidden"></div>
+
+      <div id="view-bar" class="floating">
+        <button data-view="anterior" title="Anterior view">Front</button>
+        <button data-view="posterior" title="Posterior view">Back</button>
+        <button data-view="right" title="Right lateral view">Right</button>
+        <button data-view="left" title="Left lateral view">Left</button>
+        <button data-view="superior" title="Superior view">Top</button>
+        <button data-view="inferior" title="Inferior view">Bottom</button>
+        <button data-view="reset" title="Reset camera (R)">⟲</button>
+        <span class="sep"></span>
+        <label class="explode" title="Exploded view">Explode
+          <input type="range" id="explode" min="0" max="1" step="0.01" value="0" />
+        </label>
+      </div>
+
+      <section id="section-dock" class="floating hidden">
+        <header>
+          <strong id="section-title">Cross-section</strong>
+          <select id="section-palette">
+            <option value="atlas">Atlas</option>
+            <option value="ct">CT</option>
+            <option value="mri">MRI (T1)</option>
+          </select>
+          <label class="chk"><input type="checkbox" id="section-labels" checked /> Labels</label>
+          <button class="icon-btn small" id="section-expand" title="Enlarge">⤢</button>
+        </header>
+        <canvas id="section-canvas"></canvas>
+        <footer id="section-footer"></footer>
+      </section>
+
+      <div id="loading" class="floating">
+        <div class="spinner"></div>
+        <div><strong>Loading anatomy</strong><div id="loading-detail">Preparing…</div>
+          <div class="bar"><div id="loading-bar"></div></div></div>
+      </div>
+    </main>
+
+    <aside id="right" class="hidden">
+      <div id="info"></div>
+    </aside>
+  </div>
+
+  <div id="help" class="modal hidden">
+    <div class="modal-card">
+      <button class="icon-btn close" id="help-close">✕</button>
+      <h2>Human Body Atlas</h2>
+      <p>A complete, interactive model of the adult human body with over 3,600 individually selectable structures: every bone and tooth, muscles and tendons, joints and ligaments, the heart, arteries and veins, brain regions, spinal tracts, cranial and spinal nerves, sense organs, viscera, endocrine glands, lymph nodes and skin regions.</p>
+      <h3>Controls</h3>
+      <ul>
+        <li><b>Rotate</b> left-drag · <b>Pan</b> right-drag / shift-drag · <b>Zoom</b> scroll / pinch</li>
+        <li><b>Click</b> a structure to select it · <b>Shift-click</b> to add to selection · <b>Double-click</b> to focus</li>
+        <li><kbd>H</kbd> hide selection · <kbd>I</kbd> isolate · <kbd>A</kbd> show all · <kbd>F</kbd> focus · <kbd>G</kbd> fade others · <kbd>Esc</kbd> clear</li>
+        <li><kbd>1</kbd> 3D view · <kbd>2</kbd> X-ray · <kbd>3</kbd> slice · <kbd>R</kbd> reset camera</li>
+        <li>In slice mode use <kbd>↑</kbd>/<kbd>↓</kbd> or the slider to move the cutting plane; the panel shows the exact 2D cross-section (atlas, CT or MRI style).</li>
+      </ul>
+      <h3>Credits &amp; licence</h3>
+      <p>3D anatomy: <a href="https://www.z-anatomy.com/" target="_blank" rel="noopener">Z-Anatomy</a> by Lluís Vinent and Gauthier Kervyn (CC BY-SA 4.0), derived from
+        <a href="https://dbarchive.biosciencedbc.jp/en/bodyparts3d/" target="_blank" rel="noopener">BodyParts3D</a>, © The Database Center for Life Science (CC BY-SA 2.1 JP).
+        Descriptions: Wikipedia contributors (CC BY-SA). Converted and optimised models in this app are shared under CC BY-SA 4.0.</p>
+      <p class="muted">For education only — not for diagnosis.</p>
+    </div>
+  </div>
+  <script type="module" src="/src/main.js"></script>
+</body>
+</html>

@@ -1,0 +1,33 @@
+{
+  "name": "human-body-atlas",
+  "version": "1.0.0",
+  "description": "Interactive 3D atlas of the complete human body",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "fetch:data": "bash tools/fetch-data.sh",
+    "build:data": "node --max-old-space-size=12000 tools/build-models.mjs"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/boukestam/human-body.git"
+  },
+  "bugs": {
+    "url": "https://github.com/boukestam/human-body/issues"
+  },
+  "homepage": "https://github.com/boukestam/human-body#readme",
+  "dependencies": {
+    "three": "^0.186.1",
+    "three-mesh-bvh": "^0.9.16"
+  },
+  "devDependencies": {
+    "@gltf-transform/core": "^4.5.1",
+    "@gltf-transform/extensions": "^4.5.1",
+    "@gltf-transform/functions": "^4.5.1",
+    "meshoptimizer": "^1.3.0",
+    "vite": "^8.3.5"
+  },
+  "private": true,
+  "type": "module"
+}
