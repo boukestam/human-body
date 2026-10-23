@@ -137,6 +137,14 @@ button.menu-row:active, button.menu-row:hover { background: var(--surface-3); }
 .view-grid button { min-height: 40px; border-radius: var(--radius-sm); border: 1px solid var(--line); background: var(--surface-2); cursor: pointer; font-weight: 500; transition: background 0.15s, border-color 0.15s; }
 .view-grid button:hover { background: var(--surface-3); }
 .view-grid button:active { border-color: var(--accent); }
+#anim-bar { right: 70px; bottom: calc(var(--sheet-h) + 14px); width: 300px; padding: 10px; transform-origin: bottom right; }
+.anim-row { display: grid; grid-template-columns: 36px 1fr; gap: 12px; align-items: center; padding: 8px 6px; border-radius: var(--radius-sm); cursor: pointer; }
+.anim-row:hover { background: var(--surface-3); }
+.anim-row b { display: block; font-weight: 600; font-size: 13.5px; }
+.anim-row small { display: block; color: var(--muted); font-size: 11.5px; line-height: 1.4; margin-top: 2px; }
+#anim-bar .seg { margin: 0 2px; }
+.anim-status { font-size: 12px; color: var(--accent); font-weight: 600; padding: 0 6px; }
+.anim-status:not(:empty) { padding: 8px 6px 2px; }
 .explode { display: flex; align-items: center; gap: 12px; margin: 14px 4px 2px; }
 .explode input { flex: 1; }
 
@@ -229,10 +237,10 @@ button.menu-row:active, button.menu-row:hover { background: var(--surface-3); }
 .layer-group-title { font-size: 11px; text-transform: uppercase; letter-spacing: 0.9px; color: var(--muted); padding: 9px 8px 4px; font-weight: 700; }
 .layer { display: grid; grid-template-columns: 36px 12px 1fr 84px 34px; align-items: center; gap: 10px; min-height: var(--tap); padding: 0 8px; border-radius: var(--radius-sm); cursor: pointer; user-select: none; transition: background 0.15s; }
 .layer:active { background: var(--surface-3); }
-.layer input[type=checkbox] { width: 36px; height: 22px; border-radius: 999px; border: 0; background: var(--track); position: relative; display: block; transition: background 0.2s; }
-.layer input[type=checkbox]::after { content: ''; position: absolute; top: 3px; left: 3px; width: 16px; height: 16px; border-radius: 50%; opacity: 1; background: #fff; box-shadow: 0 1px 3px rgba(0, 0, 0, 0.35); transition: transform 0.2s cubic-bezier(0.3, 0.7, 0.4, 1.2); }
-.layer input[type=checkbox]:checked { background: var(--accent); }
-.layer input[type=checkbox]:checked::after { transform: translateX(14px); }
+.layer input[type=checkbox], .anim-row input[type=checkbox] { width: 36px; height: 22px; border-radius: 999px; border: 0; background: var(--track); position: relative; display: block; transition: background 0.2s; }
+.layer input[type=checkbox]::after, .anim-row input[type=checkbox]::after { content: ''; position: absolute; top: 3px; left: 3px; width: 16px; height: 16px; border-radius: 50%; opacity: 1; background: #fff; box-shadow: 0 1px 3px rgba(0, 0, 0, 0.35); transition: transform 0.2s cubic-bezier(0.3, 0.7, 0.4, 1.2); }
+.layer input[type=checkbox]:checked, .anim-row input[type=checkbox]:checked { background: var(--accent); }
+.layer input[type=checkbox]:checked::after, .anim-row input[type=checkbox]:checked::after { transform: translateX(14px); }
 .layer .dot { width: 12px; height: 12px; border-radius: 4px; box-shadow: 0 0 0 3px color-mix(in srgb, var(--c, transparent) 22%, transparent); }
 .layer .name { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-weight: 500; transition: color 0.15s; }
 .layer:has(input[type=checkbox]:not(:checked)) .name { color: var(--muted); }
@@ -357,7 +365,7 @@ button.menu-row:active, button.menu-row:hover { background: var(--surface-3); }
   .icon-btn { width: 38px; height: 38px; }
   #menu { top: calc(var(--top-h) - 6px); right: 2px; }
   #fabs { bottom: 150px; right: 16px; }
-  #view-bar { bottom: 150px; right: 74px; }
+  #view-bar, #anim-bar { bottom: 150px; right: 74px; }
   #mode-panel { top: 14px; left: 14px; right: auto; width: 280px; padding: 14px 16px 10px; }
   #mode-panel h4 { cursor: default; }
   #mode-panel h4::after { display: none; }

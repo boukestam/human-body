@@ -13,6 +13,7 @@ import { LAYER_GROUPS, LAYER_COLORS, DEFAULT_VISIBLE, TISSUES, VIEW_PRESETS, MUS
 import { getDescription } from './descriptions.js';
 import { buildTree } from './tree.js';
 import { createSheet, desktopMQ } from './sheet.js';
+import { Animator, ANIMATIONS, ANIMATION_CONTEXT } from './animation.js';
 
 const $ = (sel) => document.querySelector(sel);
 const el = (tag, cls, html) => { const e = document.createElement(tag); if (cls) e.className = cls; if (html != null) e.innerHTML = html; return e; };
@@ -38,6 +39,10 @@ const sectionView = new SectionView($('#section-canvas'), {
 });
 const slice = new SliceController(viewer, model, sectionView);
 const picker = new Picker(viewer, model);
+const animator = new Animator(viewer, model, {
+  loadLayer: (k) => model.loadLayer(k).then(() => onLayerLoaded(k)),
+  onStatus: (text) => { $('#anim-status').textContent = text; },
+});
 
 const state = {
   mode: 'normal',
@@ -357,6 +362,8 @@ function renderInfo() {
   html += `<button class="btn ${state.fade ? 'primary' : ''}" data-act="fade" title="Make everything else translucent">Fade others</button>`;
   if (single?.side) html += '<button class="btn" data-act="other">Other side</button>';
   if (single?.ref) html += '<button class="btn" data-act="muscle">Show muscle</button>';
+  const anim = single && animationFor(single);
+  if (anim) html += `<button class="btn ${animator.active.has(anim) ? 'primary' : ''}" data-act="animate">${animator.active.has(anim) ? 'Stop animation' : 'Animate'}</button>`;
   html += '</div>';
   if (!single) {
     html += `<div class="muted">${sel.length} structures</div><ul class="list">${sel.slice(0, 300).map((s) => `<li data-id="${s.id}">${esc(s.label)}</li>`).join('')}</ul>`;
@@ -380,6 +387,7 @@ function renderInfo() {
       if (act === 'showall') showAll();
       if (act === 'fade') { state.fade = !state.fade; b.classList.toggle('primary', state.fade); refreshHighlights(); }
       if (act === 'other') select([model.counterpart(single)], { focus: true });
+      if (act === 'animate') setAnimation(anim, !animator.active.has(anim));
       if (act === 'muscle') {
         const m = model.layers.muscles.structures.find((x) => x.name.toLowerCase() === single.ref.toLowerCase() && x.side === single.side)
           || model.layers.muscles.structures.find((x) => x.name.toLowerCase().startsWith(single.ref.toLowerCase().replace(/ muscle$/, '')) && x.side === single.side);
@@ -698,6 +706,7 @@ async function setSex(sex) {
   refreshHighlights();
   renderInfo();
   updateHash();
+  if (animator.running) animator.refresh();
   if (slice.enabled) slice.recomputeSection();
   viewer.requestRender();
 }
@@ -762,6 +771,59 @@ function setRenderStyle(style) {
   viewer.requestRender();
 }
 
+// ---------------------------------------------------------------- animations
+const GUT_ANIMATED = /pharynx|oesophagus|stomach|duodenum|jejunum|ileum|caecum|colon|rectum|taenia/i;
+function animationFor(s) {
+  if (['heart', 'arteries', 'veins'].includes(s.layer)) return 'blood';
+  if (s.layer === 'nerves' || s.layer === 'cns') return 'nerves';
+  if (s.layer === 'digestive' && GUT_ANIMATED.test(s.name)) return 'digestion';
+  return null;
+}
+
+let layersBeforeAnimation = null;
+function setAnimation(name, on) {
+  if (on === animator.active.has(name)) return;
+  if (on) {
+    if (state.mode === 'xray') setMode('normal');
+    if (!animator.running) {
+      layersBeforeAnimation = {
+        visible: Object.keys(model.layers).filter((k) => model.layers[k].visible),
+        opacity: Object.fromEntries(Object.keys(model.layers).map((k) => [k, model.layers[k].opacity])),
+      };
+    }
+    // Show only the animated systems, with the skeleton faded behind them.
+    const shown = new Set([...animator.active, name].flatMap((n) => ANIMATIONS[n].show));
+    for (const k of Object.keys(ANIMATION_CONTEXT)) shown.add(k);
+    setLayers([...shown]);
+    for (const [k, v] of Object.entries(ANIMATION_CONTEXT)) setLayerOpacityUI(k, Math.min(v, model.layers[k].opacity));
+  }
+  animator.set(name, on);
+  if (!on && animator.running) {
+    setLayers([...new Set([...animator.active].flatMap((n) => ANIMATIONS[n].show)), ...Object.keys(ANIMATION_CONTEXT)]);
+  }
+  if (!on && !animator.running && layersBeforeAnimation) {
+    setLayers(layersBeforeAnimation.visible);
+    for (const [k, v] of Object.entries(layersBeforeAnimation.opacity)) setLayerOpacityUI(k, v);
+    layersBeforeAnimation = null;
+    viewer.requestRender();
+  }
+  updateAnimationUI();
+  if (state.selection.length) renderInfo();
+}
+function updateAnimationUI() {
+  document.querySelectorAll('#anim-bar [data-anim]').forEach((cb) => { cb.checked = animator.active.has(cb.dataset.anim); });
+  $('#fab-anim').classList.toggle('active', animator.running || !$('#anim-bar').classList.contains('hidden'));
+}
+document.querySelectorAll('#anim-bar [data-anim]').forEach((cb) => {
+  cb.addEventListener('change', () => setAnimation(cb.dataset.anim, cb.checked));
+});
+document.querySelectorAll('#anim-speed button').forEach((b) => {
+  b.onclick = () => {
+    animator.speed = +b.dataset.speed;
+    document.querySelectorAll('#anim-speed button').forEach((x) => x.classList.toggle('active', x === b));
+  };
+});
+
 // ---------------------------------------------------------------- modes
 const modePanel = $('#mode-panel');
 modePanel.addEventListener('click', (e) => {
@@ -790,6 +852,7 @@ function setMode(mode) {
   }
   modePanel.classList.toggle('hidden', mode === 'normal');
   if (mode === 'xray') {
+    for (const name of [...animator.active]) setAnimation(name, false);
     savedLayers = {
       visible: Object.keys(model.layers).filter((k) => model.layers[k].visible),
       opacity: Object.fromEntries(Object.keys(model.layers).map((k) => [k, model.layers[k].opacity])),
@@ -951,8 +1014,9 @@ $('#btn-help').addEventListener('click', () => $('#help').classList.remove('hidd
 $('#help-close').addEventListener('click', () => $('#help').classList.add('hidden'));
 $('#help').addEventListener('click', (e) => { if (e.target.id === 'help') $('#help').classList.add('hidden'); });
 function closePopovers(except) {
-  for (const id of ['#menu', '#view-bar']) if (id !== except) $(id).classList.add('hidden');
+  for (const id of ['#menu', '#view-bar', '#anim-bar']) if (id !== except) $(id).classList.add('hidden');
   $('#fab-view').classList.toggle('active', except === '#view-bar');
+  $('#fab-anim').classList.toggle('active', except === '#anim-bar' || animator.running);
 }
 const togglePopover = (id) => {
   const open = $(id).classList.contains('hidden');
@@ -961,10 +1025,11 @@ const togglePopover = (id) => {
 };
 $('#btn-menu').addEventListener('click', (e) => { e.stopPropagation(); togglePopover('#menu'); });
 $('#fab-view').addEventListener('click', (e) => { e.stopPropagation(); togglePopover('#view-bar'); });
+$('#fab-anim').addEventListener('click', (e) => { e.stopPropagation(); togglePopover('#anim-bar'); });
 $('#fab-reset').addEventListener('click', () => { closePopovers(); viewer.resetView(); });
 $('#btn-search').addEventListener('click', () => { showTab($('#left-tabs .active')?.dataset.tab || 'layers'); searchInput.focus(); });
 document.addEventListener('pointerdown', (e) => {
-  if (!e.target.closest('.popover, #btn-menu, #fab-view')) closePopovers();
+  if (!e.target.closest('.popover, #btn-menu, #fab-view, #fab-anim')) closePopovers();
 });
 
 window.addEventListener('keydown', (e) => {
@@ -988,7 +1053,7 @@ window.addEventListener('keydown', (e) => {
   } else if (k === '/') { e.preventDefault(); searchInput.focus(); }
 });
 
-window.__app = { viewer, model, xray, slice, picker, select, setMode, setLayers, setSex, state };
+window.__app = { viewer, model, xray, slice, picker, select, setMode, setLayers, setSex, state, animator, setAnimation };
 
 init().catch((err) => {
   console.error(err);

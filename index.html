@@ -62,12 +62,32 @@
       <div id="mode-panel" class="floating hidden"></div>
 
       <div id="fabs">
+        <button class="fab" id="fab-anim" title="Animations" aria-label="Animations">
+          <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12h3.5l2.5-6 4 12 2.5-6H21"/></svg>
+        </button>
         <button class="fab" id="fab-reset" title="Reset camera (R)" aria-label="Reset camera">
           <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M3 12a9 9 0 1 0 3-6.7"/><path d="M3 4v5h5"/></svg>
         </button>
         <button class="fab" id="fab-view" title="View options" aria-label="View options">
           <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><path d="M12 2 3 7v10l9 5 9-5V7z"/><path d="m3 7 9 5 9-5M12 12v10"/></svg>
         </button>
+      </div>
+      <div id="anim-bar" class="popover hidden">
+        <div class="pop-title">Animations</div>
+        <label class="anim-row"><input type="checkbox" data-anim="blood" />
+          <span><b>Heartbeat &amp; blood flow</b><small>Pulses run out through the arteries; blood returns to the heart through the veins</small></span></label>
+        <label class="anim-row"><input type="checkbox" data-anim="nerves" />
+          <span><b>Nerve impulses</b><small>Signals travel from the brain and spinal cord out along the nerves</small></span></label>
+        <label class="anim-row"><input type="checkbox" data-anim="digestion" />
+          <span><b>Digestion</b><small>Waves of peristalsis push food from the throat through the stomach and intestines</small></span></label>
+        <div class="pop-title">Speed</div>
+        <div class="seg" id="anim-speed">
+          <button data-speed="0.25">¼×</button>
+          <button data-speed="0.5">½×</button>
+          <button data-speed="1" class="active">1×</button>
+          <button data-speed="2">2×</button>
+        </div>
+        <div class="anim-status" id="anim-status"></div>
       </div>
       <div id="view-bar" class="popover hidden">
         <div class="pop-title">Camera</div>
@@ -148,6 +168,8 @@
         <li><kbd>H</kbd> hide · <kbd>I</kbd> isolate · <kbd>A</kbd> show all · <kbd>F</kbd> focus · <kbd>G</kbd> fade others · <kbd>Esc</kbd> clear</li>
         <li><kbd>1</kbd> 3D · <kbd>2</kbd> X-ray · <kbd>3</kbd> slice · <kbd>R</kbd> reset camera · <kbd>/</kbd> search · <kbd>↑</kbd>/<kbd>↓</kbd> move slice</li>
       </ul>
+      <h3>Animations</h3>
+      <p>The pulse button beside the model animates the heartbeat with blood pulsing out through the arteries and returning through the veins, nerve impulses spreading from the brain and spinal cord, and food moving through the digestive tract. Selecting a heart, vessel, nerve or part of the gut also offers <b>Animate</b>.</p>
       <h3>Credits &amp; licence</h3>
       <p>3D anatomy: <a href="https://www.z-anatomy.com/" target="_blank" rel="noopener">Z-Anatomy</a> by Lluís Vinent and Gauthier Kervyn (CC BY-SA 4.0), derived from
         <a href="https://dbarchive.biosciencedbc.jp/en/bodyparts3d/" target="_blank" rel="noopener">BodyParts3D</a>, © The Database Center for Life Science (CC BY-SA 2.1 JP).

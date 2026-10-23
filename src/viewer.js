@@ -83,6 +83,8 @@ export class Viewer {
 
     this.needsRender = true;
     this.renderHooks = [];
+    // Called every frame with the frame time; a hook returning true redraws.
+    this.tickHooks = [];
     this.renderOverride = null;
     this.timer = new THREE.Timer();
     this.anim = null;
@@ -136,6 +138,7 @@ export class Viewer {
       this.needsRender = true;
     }
     if (this.controls.update()) this.needsRender = true;
+    for (const h of this.tickHooks) if (h(dt)) this.needsRender = true;
     if (!this.needsRender) return;
     this.needsRender = false;
     this.render();
