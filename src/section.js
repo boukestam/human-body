@@ -21,6 +21,7 @@ export function computeSection(parts, sex, axisKey, position, hullParts = []) {
   const n = axis.normal;
   const comp = n.x ? 'x' : n.y ? 'y' : 'z';
   const items = [];
+  const solids = new Map();
   const skinChains = [];
   const skinParts = [];
   for (const part of all) {
@@ -35,10 +36,26 @@ export function computeSection(parts, sex, axisKey, position, hullParts = []) {
       continue;
     }
     if (!loops) continue;
-    if (SHEETS.has(tissue) || part.structure.layer === 'fasciae') markOpen(loops);
-    let area = 0;
-    for (const l of loops) if (!l.open) area += Math.abs(polyArea(l.pts));
-    items.push({ part, structure: part.structure, tissue, loops, area });
+    if (SHEETS.has(tissue) || part.structure.layer === 'fasciae') {
+      markOpen(loops);
+      pushItem(items, part, loops);
+      continue;
+    }
+    let list = solids.get(part.structure);
+    if (!list) solids.set(part.structure, (list = []));
+    list.push({ part, loops });
+  }
+  // A structure's surface can be split over several meshes (a skull bone and
+  // its sutures), so the open pieces of all its parts are joined end to end
+  // before what is left open is closed with a straight edge.
+  for (const list of solids.values()) {
+    const own = list.map(({ loops }) => loops.filter((l) => l.closed));
+    const pool = [];
+    list.forEach(({ loops }, k) => { for (const l of loops) if (!l.closed) pool.push({ pts: Array.from(l.pts), tag: k }); });
+    // Sutures are thin strips along a bone's edges: a joined outline belongs to the bone.
+    const weight = list.map(({ part }) => (part.tissue === 'suture' ? 0.05 : 1));
+    for (const j of joinTagged(pool, 1, weight)) own[j.tag].push({ pts: new Float32Array(j.pts), closed: true });
+    list.forEach(({ part }, k) => { if (own[k].length) pushItem(items, part, own[k]); });
   }
   if (skinChains.length) {
     let body = joinChains(skinChains);
@@ -139,6 +156,45 @@ function chain(segA, segB, pts) {
 
 // Tissues modelled as thin sheets rather than closed volumes.
 const SHEETS = new Set(['fascia', 'capsule', 'peritoneum']);
+
+function pushItem(items, part, loops) {
+  let area = 0;
+  for (const l of loops) if (!l.open) area += Math.abs(polyArea(l.pts));
+  items.push({ part, structure: part.structure, tissue: part.tissue, loops, area });
+}
+
+// Joins open chains (from several parts, each tagged) end to end; each result
+// keeps the tag that contributed most of its (weighted) points.
+function joinTagged(pool, tol, weight) {
+  const out = [];
+  while (pool.length) {
+    const first = pool.pop();
+    let cur = first.pts;
+    const count = new Map([[first.tag, cur.length]]);
+    for (;;) {
+      const ex = cur[cur.length - 2], ey = cur[cur.length - 1];
+      let best = -1, bestD = Math.min(tol * tol, (cur[0] - ex) ** 2 + (cur[1] - ey) ** 2), rev = false;
+      for (let i = 0; i < pool.length; i++) {
+        const c = pool[i].pts;
+        const d0 = (c[0] - ex) ** 2 + (c[1] - ey) ** 2;
+        const d1 = (c[c.length - 2] - ex) ** 2 + (c[c.length - 1] - ey) ** 2;
+        if (d0 < bestD) { bestD = d0; best = i; rev = false; }
+        if (d1 < bestD) { bestD = d1; best = i; rev = true; }
+      }
+      if (best < 0) break;
+      const { pts, tag } = pool.splice(best, 1)[0];
+      let c = pts;
+      if (rev) { c = []; for (let i = pts.length - 2; i >= 0; i -= 2) c.push(pts[i], pts[i + 1]); }
+      cur = cur.concat(c);
+      count.set(tag, (count.get(tag) || 0) + c.length);
+    }
+    if (cur.length < 6) continue;
+    let tag = first.tag, most = 0;
+    for (const [t, n] of count) if (n * weight[t] > most) { most = n * weight[t]; tag = t; }
+    out.push({ pts: cur, tag, gap: Math.hypot(cur[0] - cur[cur.length - 2], cur[1] - cur[cur.length - 1]) });
+  }
+  return out;
+}
 
 // Flags chains of sheet-like structures that are really open, as opposed to
 // outlines with a small gap from an imperfect mesh.
