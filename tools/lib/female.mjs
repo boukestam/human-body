@@ -200,6 +200,40 @@ export function buildFemaleWarp(z, fRaw, { log = console.log } = {}) {
     if (d.y < -0.55) continue;
     add(cast(ZS, zh, d), cast(FS, fh, d));
   }
+  // Face: eye centres, the nose tip and dense rays from behind the eyes, so the
+  // eyeballs, nasal cartilages and facial muscles sit inside her face.
+  const boxCentre = (pts) => bbox(pts).getCenter(V(0, 0, 0));
+  const eyes = [];
+  for (const [sd, S] of [['l', 'L'], ['r', 'R']]) {
+    const ze = concat([zBone('Sclera', sd), zBone('Cornea', sd)].filter(Boolean));
+    const fe = concat([fNode(`VH_F_retina_${S}`), fNode(`VH_F_cornea_${S}`)].filter(Boolean));
+    if (!ze.length || !fe.length) { log('missing eye', sd); continue; }
+    eyes.push({ z: boxCentre(ze), f: boxCentre(fe) });
+  }
+  if (eyes.length === 2) {
+    for (const e of eyes) add(e.z, e.f, 'face');
+    const zm = eyes[0].z.clone().add(eyes[1].z).multiplyScalar(0.5);
+    const fm = eyes[0].f.clone().add(eyes[1].f).multiplyScalar(0.5);
+    const zScale = eyes[0].z.distanceTo(eyes[1].z), fScale = eyes[0].f.distanceTo(eyes[1].f);
+    log(`eyes: interpupillary ${zScale.toFixed(2)} -> ${fScale.toFixed(2)} cm`);
+    const noseTip = (pts, m, s) => {
+      let best = null;
+      for (let i = 0; i < pts.length; i += 3) {
+        if (Math.abs(pts[i] - m.x) > 0.3 * s || pts[i + 1] > m.y - 0.4 * s || pts[i + 1] < m.y - 1.2 * s) continue;
+        if (!best || pts[i + 2] > best.z) best = V(pts[i], pts[i + 1], pts[i + 2]);
+      }
+      return best;
+    };
+    add(noseTip(zPts, zm, zScale), noseTip(fPts, fm, fScale), 'face');
+    const zo = zm.clone().add(V(0, 0, -1.2 * zScale)), fo = fm.clone().add(V(0, 0, -1.2 * fScale));
+    for (let i = 0; i < 160; i++) {
+      const y = 1 - (i / 159) * 2;
+      const r = Math.sqrt(Math.max(0, 1 - y * y));
+      const d = V(Math.cos(golden * i) * r, y, Math.sin(golden * i) * r);
+      if (d.z < 0.45 || d.y < -0.7) continue;
+      add(cast(ZS, zo, d, 20), cast(FS, fo, d, 20), 'face');
+    }
+  }
   // Legs: rays from each leg's centre.
   for (const side of [1, -1]) {
     for (const h of heights([{ z: ankle.z + 3, f: ankle.f + 3 }, knee, { z: crotch.z - 2, f: crotch.f - 2 }], [6, 8])) {
@@ -282,6 +316,7 @@ export function buildFemaleWarp(z, fRaw, { log = console.log } = {}) {
   const dv = pairs.map((p) => p.dst.clone().sub(p.src));
   const kept = pairs.filter((p, i) => {
     if (disp[i] > Math.max(30, med * 5)) return false;
+    if (p.kind === 'face' || p.kind === 'bone') return true;
     const mean = V(0, 0, 0);
     let n = 0;
     for (let j = 0; j < pairs.length; j++) {

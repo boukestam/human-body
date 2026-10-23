@@ -10,6 +10,32 @@ export const SEXES = { m: 'Male', f: 'Female' };
 
 // Holds every structure and, per layer and sex, one merged mesh. Per-part
 // state lives in the PartStore textures.
+
+// Smooth, area-weighted vertex normals as a normalised Int16 attribute.
+function vertexNormals(geo) {
+  const pos = geo.getAttribute('position');
+  const idx = geo.index.array;
+  const n = pos.count;
+  const p = new Float32Array(n * 3);
+  for (let i = 0; i < n; i++) { p[i * 3] = pos.getX(i); p[i * 3 + 1] = pos.getY(i); p[i * 3 + 2] = pos.getZ(i); }
+  const acc = new Float32Array(n * 3);
+  for (let t = 0; t < idx.length; t += 3) {
+    const a = idx[t] * 3, b = idx[t + 1] * 3, c = idx[t + 2] * 3;
+    const ux = p[b] - p[a], uy = p[b + 1] - p[a + 1], uz = p[b + 2] - p[a + 2];
+    const vx = p[c] - p[a], vy = p[c + 1] - p[a + 1], vz = p[c + 2] - p[a + 2];
+    const nx = uy * vz - uz * vy, ny = uz * vx - ux * vz, nz = ux * vy - uy * vx;
+    acc[a] += nx; acc[a + 1] += ny; acc[a + 2] += nz;
+    acc[b] += nx; acc[b + 1] += ny; acc[b + 2] += nz;
+    acc[c] += nx; acc[c + 1] += ny; acc[c + 2] += nz;
+  }
+  const out = new Int16Array(n * 3);
+  for (let i = 0; i < n * 3; i += 3) {
+    const l = Math.hypot(acc[i], acc[i + 1], acc[i + 2]) || 1;
+    out[i] = Math.round((acc[i] / l) * 32767); out[i + 1] = Math.round((acc[i + 1] / l) * 32767); out[i + 2] = Math.round((acc[i + 2] / l) * 32767);
+  }
+  return new THREE.BufferAttribute(out, 3, true);
+}
+
 export class AnatomyModel {
   constructor() {
     this.root = new THREE.Group();
@@ -160,6 +186,7 @@ export class AnatomyModel {
     const geo = src.geometry;
     geo.setAttribute('partId', geo.getAttribute('_part'));
     geo.deleteAttribute('_part');
+    if (!geo.getAttribute('normal')) geo.setAttribute('normal', vertexNormals(geo));
     const matrix = src.matrixWorld.clone();
     const make = (material, order) => {
       const m = new THREE.Mesh(geo, material);

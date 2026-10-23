@@ -14,8 +14,9 @@ individually selectable anatomical structures in toggleable layers, plus free-or
   - Male reproductive system: testes, epididymides, ductus deferentes, seminal glands, prostate, penis.
   - Female reproductive system: uterus (fundus, body, isthmus, cervix, walls), ovaries, uterine tubes (infundibulum,
     fimbriae, ampulla, isthmus), vagina, broad / round / cardinal / uterosacral / ovarian / suspensory ligaments,
-    mesosalpinx, mesovarium, uterine arteries and veins, and the breasts (lobes, lactiferous ducts and sinuses,
-    suspensory ligaments, fat, nipple, areola).
+    mesosalpinx, mesovarium, uterine and ovarian arteries and veins, the breasts (lobes, lactiferous ducts and
+    sinuses, suspensory ligaments, fat, nipple, areola), the female urethra, the clitoris (glans, body, crura), the
+    vestibular bulbs and the greater vestibular (Bartholin's) glands.
 - **19 layers** with visibility and opacity controls, and a hierarchical anatomy tree where any group or structure can
   be shown or hidden.
 - **Views**
@@ -38,6 +39,9 @@ npm install
 npm run dev       # development server
 npm run build     # static build in dist/ (can be hosted anywhere)
 ```
+
+Every push to the default branch builds the site and publishes `dist/` to the `gh-pages` branch
+(`.github/workflows/deploy-pages.yml`), which GitHub Pages serves.
 
 Keyboard: `1` 3D · `2` X-ray · `3` slice · `H` hide · `I` isolate · `A` show all · `F` focus · `G` fade others ·
 `R` reset camera · `/` search · `↑`/`↓` move the slice plane.
@@ -62,12 +66,25 @@ npm run build:data   # builds public/data for both bodies (~3 minutes)
    are first matched with a shoulder rig (`pose.mjs`), then ~1,600 corresponding landmarks (vertebrae, pelvis, leg
    bones, and skin points sampled by rays around the torso, head, legs and arms; `landmarks.mjs`, `female.mjs`) drive
    a smooth radial-basis-function space warp (`rbf.mjs`). Male-only structures are removed; the female reproductive
-   organs, breasts and uterine vessels are added from the female reference body, and her real skin surface replaces
-   the warped one (split into the Z-Anatomy skin regions).
-3. Adds the **caecum, ileum and rectum** (absent from Z-Anatomy) to both bodies from the HuBMAP male / female bodies,
+   organs, breasts, bladder and uterine vessels are added from the female reference body, and her real skin surface
+   replaces the warped one (split into the Z-Anatomy skin regions). Eye, nose and face landmarks keep the eyes, nasal
+   cartilages and facial muscles inside her face.
+3. Models the **female structures neither source has** (`procedural.mjs`), anchored to landmarks of the female body
+   (bladder neck, vaginal orifice, pubic symphysis, ischial tuberosities, suspensory ligaments of the ovary, skin) and
+   sized from published adult measurements, and checked at build time (lengths, diameters, and that they stay inside
+   the skin):
+   - urethra (~4 cm × 6 mm) from the bladder neck along the anterior vaginal wall to the vestibule;
+   - clitoris: glans ~2.5 cm in front of the urethral orifice, a ~3 cm body rising to the pubic symphysis and two
+     ~6.5 cm crura along the ischiopubic rami; vestibular bulbs (~4 cm) beside the vestibule and ~1 cm greater
+     vestibular glands with their ducts;
+   - ovarian arteries and veins, following the gonadal vessels from the aorta / left renal vein / inferior vena cava
+     and then the suspensory ligament to the ovary;
+   - head hair (a shoulder-length style generated over her scalp), eyebrows and pubic hair.
+   The ureters are bent onto the female bladder's ureteral orifices.
+4. Adds the **caecum, ileum and rectum** (absent from Z-Anatomy) to both bodies from the HuBMAP male / female bodies,
    registered on the pelvic bones and snapped onto the colon (`supplement.mjs`).
-4. Simplifies every part, merges each layer into one quantised, meshopt-compressed GLB per body (`gltf.mjs`) and writes
-   `meta.json` and sharded descriptions.
+5. Simplifies every part, merges each layer into one quantised, meshopt-compressed GLB per body (`gltf.mjs`; normals
+   are recomputed in the browser) and writes `meta.json` and sharded descriptions.
 
 ## Credits & licences
 
@@ -80,6 +97,7 @@ npm run build:data   # builds public/data for both bodies (~3 minutes)
   Heidi Schlehlein et al., [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/), created from the Visible Human
   Project data of the U.S. National Library of Medicine.
 - Structure descriptions: Wikipedia contributors, CC BY-SA.
+- Procedurally modelled structures (`tools/lib/procedural.mjs`) are part of this project.
 - The converted model and description files in `public/data` are distributed under CC BY-SA 4.0.
 
 For education only — not for diagnosis.

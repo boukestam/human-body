@@ -13,12 +13,11 @@ const io = new NodeIO().registerExtensions([EXTMeshoptCompression, KHRMeshQuanti
 
 export const ready = MeshoptEncoder.ready;
 
-// parts: [{ partId, mesh: { positions, indices }, normals }]
+// parts: [{ partId, mesh: { positions, indices } }]. Normals are computed by the client.
 export async function writeLayer(file, name, parts, extras) {
   let nv = 0, ni = 0;
   for (const p of parts) { nv += p.mesh.positions.length / 3; ni += p.mesh.indices.length; }
   const pos = new Float32Array(nv * 3);
-  const nor = new Float32Array(nv * 3);
   const pid = new Uint16Array(nv);
   const idx = new Uint32Array(ni);
   const table = [];
@@ -26,7 +25,6 @@ export async function writeLayer(file, name, parts, extras) {
   for (const p of parts) {
     const n = p.mesh.positions.length / 3;
     pos.set(p.mesh.positions, v * 3);
-    nor.set(p.normals, v * 3);
     pid.fill(p.partId, v, v + n);
     for (let k = 0; k < p.mesh.indices.length; k++) idx[i + k] = p.mesh.indices[k] + v;
     table.push([p.partId, v, n, i, p.mesh.indices.length]);
@@ -38,14 +36,13 @@ export async function writeLayer(file, name, parts, extras) {
   const acc = (type, arr) => doc.createAccessor().setType(type).setArray(arr).setBuffer(buffer);
   const prim = doc.createPrimitive()
     .setAttribute('POSITION', acc('VEC3', pos))
-    .setAttribute('NORMAL', acc('VEC3', nor))
     .setAttribute('_PART', acc('SCALAR', pid))
     .setIndices(acc('SCALAR', idx))
     .setExtras({ parts: table, ...extras });
   const mesh = doc.createMesh(name).addPrimitive(prim);
   doc.createScene(name).addChild(doc.createNode(name).setMesh(mesh));
   await doc.transform(
-    quantize({ pattern: /^(POSITION|NORMAL)$/, quantizePosition: 14, quantizeNormal: 8, cleanup: false }),
+    quantize({ pattern: /^POSITION$/, quantizePosition: 14, cleanup: false }),
     meshopt({ encoder: MeshoptEncoder, level: 'high' }),
   );
   await io.write(file, doc);

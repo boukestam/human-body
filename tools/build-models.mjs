@@ -13,9 +13,10 @@ import { extractZAnatomy } from './lib/za.mjs';
 import { loadHRA } from './lib/hra.mjs';
 import { buildFemaleWarp } from './lib/female.mjs';
 import { registerGut } from './lib/supplement.mjs';
+import { headFrame, femaleHair, femaleEyebrow, femalePelvis } from './lib/procedural.mjs';
 import { LAYERS } from './lib/layers.mjs';
 import { FEMALE_STRUCTURES, GUT_STRUCTURES, MALE_ONLY, DESC_ALIASES } from './lib/hra-catalog.mjs';
-import { weld, fromIndexed, simplify, compact, computeNormals, structureStats, ready as meshReady } from './lib/mesh.mjs';
+import { weld, fromIndexed, simplify, compact, structureStats, ready as meshReady } from './lib/mesh.mjs';
 import { soupToBVH } from './lib/landmarks.mjs';
 import * as THREE from 'three';
 import { writeLayer, ready as gltfReady } from './lib/gltf.mjs';
@@ -37,6 +38,52 @@ log(`sources loaded (${elapsed()})`);
 const { warp, femaleNodes } = buildFemaleWarp(z, fRaw, { log: (m) => log('  ' + m) });
 log(`female warp ready (${elapsed()})`);
 
+// ------------------------------------------------------------------ female procedural models
+const warpArray = (a) => {
+  const o = new Float32Array(a.length);
+  for (let i = 0; i < a.length; i += 3) { const p = warp.apply(a[i], a[i + 1], a[i + 2]); o[i] = p[0]; o[i + 1] = p[1]; o[i + 2] = p[2]; }
+  return o;
+};
+const zEntry = (key) => {
+  const [name, side = ''] = key.split(/ (?=[lr]$)/);
+  return z.entries.find((x) => x.name === name && x.side === side);
+};
+const zWarped = (key) => {
+  const arrs = Object.values(zEntry(key).tissues);
+  const all = new Float32Array(arrs.reduce((n, a) => n + a.length, 0));
+  let k = 0;
+  for (const a of arrs) { all.set(a, k); k += a.length; }
+  return warpArray(all);
+};
+const frame = headFrame(femaleNodes);
+const pelvis = femalePelvis(femaleNodes, zWarped, (m) => log('  ' + m));
+// Female geometry replacing the warped Z-Anatomy one, keyed by 'name|side'.
+const femaleReplace = new Map([
+  ['Hairs of head|', femaleHair(femaleNodes, frame)],
+  ['Hairs of eyebrow|l', femaleEyebrow(femaleNodes, 1, frame)],
+  ['Hairs of eyebrow|r', femaleEyebrow(femaleNodes, -1, frame)],
+  ['Pubic hairs|', pelvis.pubicHair],
+  ['Urinary bladder|', pelvis.bladder],
+]);
+const femaleDeform = new Map([['Ureter|l', pelvis.ureterDeform.l], ['Ureter|r', pelvis.ureterDeform.r]]);
+const FEMALE_EXT = ['Visceral systems', 'Genital systems', 'Female genital system', 'Female external genitalia'];
+const procedural = [
+  ['Female urethra', '', 'urinary', 'duct', ['Visceral systems', 'Urinary system'], pelvis.urethra],
+  ['Glans of clitoris', '', 'reproductive', 'erectile', [...FEMALE_EXT, 'Clitoris'], pelvis.glans],
+  ['Body of clitoris', '', 'reproductive', 'erectile', [...FEMALE_EXT, 'Clitoris'], pelvis.clitoralBody],
+  ['Crus of clitoris', 'l', 'reproductive', 'erectile', [...FEMALE_EXT, 'Clitoris'], pelvis.crura.l],
+  ['Crus of clitoris', 'r', 'reproductive', 'erectile', [...FEMALE_EXT, 'Clitoris'], pelvis.crura.r],
+  ['Bulb of vestibule', 'l', 'reproductive', 'erectile', FEMALE_EXT, pelvis.bulbs.l],
+  ['Bulb of vestibule', 'r', 'reproductive', 'erectile', FEMALE_EXT, pelvis.bulbs.r],
+  ['Greater vestibular gland', 'l', 'reproductive', 'gland', FEMALE_EXT, pelvis.glands.l],
+  ['Greater vestibular gland', 'r', 'reproductive', 'gland', FEMALE_EXT, pelvis.glands.r],
+  ['Ovarian artery', 'l', 'arteries', 'artery', zEntry('Left testicular artery').path, pelvis.ovarian.artery.l],
+  ['Ovarian artery', 'r', 'arteries', 'artery', zEntry('Left testicular artery').path, pelvis.ovarian.artery.r],
+  ['Ovarian vein', 'l', 'veins', 'vein', zEntry('Left testicular vein').path, pelvis.ovarian.vein.l],
+  ['Ovarian vein', 'r', 'veins', 'vein', zEntry('Left testicular vein').path, pelvis.ovarian.vein.r],
+];
+log(`female procedural models ready (${elapsed()})`);
+
 // ------------------------------------------------------------------ entries
 const entries = [];
 for (const e of z.entries) {
@@ -49,6 +96,7 @@ for (const s of FEMALE_STRUCTURES) {
   entries.push({ ...s, src: 'hra', node, tissueList: [s.tissue] });
 }
 for (const g of GUT_STRUCTURES) entries.push({ ...g, src: 'gut', tissueList: [g.tissue] });
+for (const [name, side, layer, tissue, p, mesh] of procedural) entries.push({ name, side, layer, tissue, path: p, sex: 'f', src: 'proc', mesh, tissueList: [tissue] });
 
 let partCount = 0;
 entries.forEach((e, i) => {
@@ -76,11 +124,6 @@ const pointsOf = (names, xform) => {
   }
   return out;
 };
-const warpArray = (a) => {
-  const o = new Float32Array(a.length);
-  for (let i = 0; i < a.length; i += 3) { const p = warp.apply(a[i], a[i + 1], a[i + 2]); o[i] = p[0]; o[i + 1] = p[1]; o[i + 2] = p[2]; }
-  return o;
-};
 const gutTargets = ['Ascending colon', 'Descending colon', 'Sigmoid colon', 'Urinary bladder', 'Sacrum', 'Coccyx', 'Hip bone l', 'Hip bone r'];
 const gutNodes = GUT_STRUCTURES.map((g) => g.node);
 const gut = {
@@ -100,7 +143,16 @@ for (const e of entries) {
     if (e.src === 'za') {
       const male = simplify(weld(e.tissues[tissue]), cfg.ratio, cfg.error);
       if (e.sex !== 'f') parts.m.push({ tissue, partId, mesh: male });
-      if (e.sex !== 'm') parts.f.push({ tissue, partId, mesh: { positions: warpArray(male.positions), indices: male.indices } });
+      const key = `${e.name}|${e.side || ''}`;
+      if (e.sex === 'm') return;
+      if (femaleReplace.has(key)) {
+        if (k === 0) parts.f.push({ tissue, partId, mesh: simplify(fromIndexed(femaleReplace.get(key).positions, femaleReplace.get(key).indices), cfg.ratio, cfg.error) });
+      } else {
+        const positions = warpArray(male.positions);
+        parts.f.push({ tissue, partId, mesh: { positions: femaleDeform.has(key) ? femaleDeform.get(key)(positions) : positions, indices: male.indices } });
+      }
+    } else if (e.src === 'proc') {
+      parts.f.push({ tissue, partId, mesh: simplify(fromIndexed(e.mesh.positions, e.mesh.indices), cfg.ratio, cfg.error) });
     } else if (e.src === 'hra') {
       parts.f.push({ tissue, partId, mesh: simplify(fromIndexed(e.node.positions, e.node.indices), cfg.ratio, cfg.error, 12000) });
     } else if (e.src === 'gut') {
@@ -183,7 +235,7 @@ for (const sex of ['m', 'f']) {
       const st = structureStats(ps);
       if (sex === 'f' && e.femaleSkin) st.sign = femaleSkinSign;
       structs[e.id] = [st.sign, st.open, st.dominant];
-      for (const p of ps) parts.push({ partId: p.partId, mesh: p.mesh, normals: computeNormals(p.mesh) });
+      for (const p of ps) parts.push({ partId: p.partId, mesh: p.mesh });
     }
     const file = path.join(OUT, 'models', sex, `${layer}.glb`);
     const { tris, bytes } = await writeLayer(file, layer, parts, { structs });
@@ -202,7 +254,7 @@ for (const e of entries) {
   if (e.ref) o.r = e.ref;
   if (e.bone) o.b = e.bone;
   if (e.sex) o.x = e.sex;
-  if (e.src !== 'za') o.src = 'hra';
+  if (e.src !== 'za') o.src = e.src === 'proc' ? 'proc' : 'hra';
   meta.entries.push(o);
 }
 fs.writeFileSync(path.join(OUT, 'meta.json'), JSON.stringify(meta));
