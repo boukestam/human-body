@@ -24,6 +24,31 @@ export class Viewer {
     this.scene = new THREE.Scene();
     this.background = new THREE.Color('#0d1117');
     this.scene.background = null;
+    this.backdrop = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), new THREE.ShaderMaterial({
+      uniforms: {
+        uTop: { value: new THREE.Color('#151d31') },
+        uBottom: { value: new THREE.Color('#070a12') },
+        uGlow: { value: new THREE.Color('#1a2a52') },
+        uAspect: { value: 1 },
+      },
+      vertexShader: 'varying vec2 vUv; void main() { vUv = uv; gl_Position = vec4(position.xy, 0.0, 1.0); }',
+      fragmentShader: `
+        uniform vec3 uTop, uBottom, uGlow; uniform float uAspect; varying vec2 vUv;
+        void main() {
+          vec3 c = mix(uBottom, uTop, smoothstep(0.0, 1.0, vUv.y));
+          vec2 d = (vUv - vec2(0.5, 0.56)) * vec2(uAspect, 1.0);
+          c += uGlow * exp(-dot(d, d) * 2.6);
+          gl_FragColor = vec4(c, 1.0);
+          #include <colorspace_fragment>
+          gl_FragColor.rgb += (fract(sin(dot(gl_FragCoord.xy, vec2(12.9898, 78.233))) * 43758.5453) - 0.5) / 255.0;
+        }`,
+      depthTest: false,
+      depthWrite: false,
+    }));
+    this.backdrop.frustumCulled = false;
+    this.backdropScene = new THREE.Scene();
+    this.backdropScene.add(this.backdrop);
+    this.backdropCamera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
 
     const pmrem = new THREE.PMREMGenerator(renderer);
     this.scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
@@ -74,6 +99,7 @@ export class Viewer {
     if (!w || !h) return;
     this.renderer.setSize(w, h);
     this.camera.aspect = w / h;
+    this.backdrop.material.uniforms.uAspect.value = w / h;
     // Keep the model centred in the part of the canvas not covered by the bottom sheet.
     const shift = Math.min(this.bottomInset, h * 0.55) / 2;
     if (shift > 0) this.camera.setViewOffset(w, h, 0, shift, w, h);
@@ -86,6 +112,15 @@ export class Viewer {
   setBottomInset(px) {
     this.bottomInset = px;
     this.resize();
+  }
+
+  setBackdrop(top, bottom, glow) {
+    const u = this.backdrop.material.uniforms;
+    u.uTop.value.set(top);
+    u.uBottom.value.set(bottom);
+    u.uGlow.value.set(glow);
+    this.background.set(bottom);
+    this.requestRender();
   }
 
   requestRender() {
@@ -112,7 +147,10 @@ export class Viewer {
     r.setClearColor(this.background, 1);
     r.clear();
     if (this.renderOverride) this.renderOverride(r, this.scene, this.camera);
-    else r.render(this.scene, this.camera);
+    else {
+      r.render(this.backdropScene, this.backdropCamera);
+      r.render(this.scene, this.camera);
+    }
     for (const h of this.renderHooks) h.afterRender?.();
     if (this.showHelper) this.viewHelper.render(r);
   }

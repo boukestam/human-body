@@ -104,20 +104,16 @@ export const LAYER_GROUPS = [
   { label: 'Orientation', layers: ['references'] },
 ];
 
+// Clear, distinct colours that identify each layer in the interface.
 export const LAYER_COLORS = {
-  skin: '#e2ae92', muscles: '#c0453a', fasciae: '#d8ccb4', skeleton: '#e8dcc0', ligaments: '#bdb59e',
-  heart: '#a83a30', arteries: '#d6302a', veins: '#3b5fc0', cns: '#e0b0a8', nerves: '#f2d35a', senses: '#9cc6e8',
-  respiratory: '#ef9f9b', digestive: '#cf8c6e', urinary: '#c87d68', reproductive: '#b48ac4', endocrine: '#d8a14a',
-  lymphatic: '#8cc06a', attachments: '#e05050', references: '#3cc8ff',
+  skin: '#f4a582', muscles: '#f0524a', fasciae: '#d9b26f', skeleton: '#e9e2cf', ligaments: '#2fc7b0',
+  heart: '#ff4f7b', arteries: '#e3263a', veins: '#3d7bff', cns: '#b98cff', nerves: '#ffd23f', senses: '#29c8f2',
+  respiratory: '#ff9fc6', digestive: '#ff9a3d', urinary: '#a8e05a', reproductive: '#e57bf0', endocrine: '#f5a623',
+  lymphatic: '#45d483', attachments: '#ff6b6b', references: '#4fb3ff',
 };
 
 // Distinct colours per layer for the "systems" colour scheme.
-export const SYSTEM_COLORS = {
-  skin: '#f0b48f', muscles: '#e0483c', fasciae: '#e8d27a', skeleton: '#f5f0e0', ligaments: '#8fd0c0',
-  heart: '#ff4d6d', arteries: '#ff2e2e', veins: '#2e6bff', cns: '#ff9de2', nerves: '#ffe23d', senses: '#5ee0ff',
-  respiratory: '#7cf0b0', digestive: '#ffa64d', urinary: '#d4ff5e', reproductive: '#b980ff', endocrine: '#ffcc00',
-  lymphatic: '#3dff8a', attachments: '#ff6060', references: '#3cc8ff',
-};
+export const SYSTEM_COLORS = { ...LAYER_COLORS };
 
 // Z-Anatomy groups muscles by primary action; used for the "function" colour scheme.
 export const MUSCLE_FUNCTION_COLORS = {

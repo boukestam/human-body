@@ -17,6 +17,10 @@ import { createSheet, desktopMQ } from './sheet.js';
 const $ = (sel) => document.querySelector(sel);
 const el = (tag, cls, html) => { const e = document.createElement(tag); if (cls) e.className = cls; if (html != null) e.innerHTML = html; return e; };
 const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+// Range inputs show their filled portion through the --p custom property.
+const paintRange = (r) => r.style.setProperty('--p', `${((r.value - r.min) / ((r.max - r.min) || 1)) * 100}%`);
+const paintRanges = (root = document) => root.querySelectorAll('input[type=range]').forEach(paintRange);
+document.addEventListener('input', (e) => { if (e.target.type === 'range') paintRange(e.target); });
 
 const viewer = new Viewer($('#canvas-host'));
 const model = new AnatomyModel();
@@ -119,10 +123,13 @@ function buildLayerPanel() {
   sexRow.querySelectorAll('button').forEach((b) => (b.onclick = () => setSex(b.dataset.sex)));
   host.append(sexRow, actions);
   for (const g of LAYER_GROUPS) {
-    host.append(el('div', 'layer-group-title', g.label));
+    const box = el('div', 'layer-group');
+    box.append(el('div', 'layer-group-title', g.label));
+    host.append(box);
     for (const k of g.layers) {
       const l = model.layers[k];
       const row = el('div', 'layer');
+      row.style.setProperty('--c', LAYER_COLORS[k]);
       const cb = el('input');
       cb.type = 'checkbox';
       cb.checked = DEFAULT_VISIBLE.has(k);
@@ -135,7 +142,7 @@ function buildLayerPanel() {
       range.title = 'Opacity';
       const progressRow = el('div', 'progress', '<div></div>');
       row.append(cb, dot, name, range, count, progressRow);
-      host.append(row);
+      box.append(row);
       row.addEventListener('click', (e) => {
         if (e.target === range || e.target === cb) return;
         cb.checked = !cb.checked;
@@ -149,6 +156,7 @@ function buildLayerPanel() {
       state.layerUI[k] = { row, cb, range, count, bar: progressRow.firstChild, progressRow };
     }
   }
+  paintRanges(host);
 }
 
 function setLayers(keys) {
@@ -178,7 +186,7 @@ function setLayerOpacityUI(k, v) {
   l.mats.layerOpacity.value = v;
   l.group.visible = l.visible && v > 0.01;
   model.updatePasses(state.fade && state.selection.length > 0);
-  if (state.layerUI[k]) state.layerUI[k].range.value = v;
+  if (state.layerUI[k]) { state.layerUI[k].range.value = v; paintRange(state.layerUI[k].range); }
 }
 
 function afterVisibilityChange() {
@@ -456,7 +464,7 @@ function runSearch() {
   top.forEach(([, it], i) => {
     const r = el('div', 'result' + (i === searchActive ? ' active' : ''));
     if (it.type === 'group') {
-      r.innerHTML = `<span class="dot" style="background:transparent;border:1px solid #8b98a8"></span><span class="t">${hl(it.path[it.path.length - 1])} <span class="muted">· group</span></span><span class="p">${esc(it.path.slice(0, -1).join(' › '))}</span>`;
+      r.innerHTML = `<span class="dot group"></span><span class="t">${hl(it.path[it.path.length - 1])} <span class="muted">· group</span></span><span class="p">${esc(it.path.slice(0, -1).join(' › '))}</span>`;
       r.onclick = () => selectGroup(it.path);
     } else {
       const s = it.s;
@@ -794,7 +802,7 @@ function setMode(mode) {
     if (viewer.camera.position.distanceTo(viewer.controls.target) < 150) viewer.resetView();
   }
   if (mode === 'slice') {
-    if (state.explode) { state.explode = 0; $('#explode').value = 0; applyExplode(); }
+    if (state.explode) { state.explode = 0; $('#explode').value = 0; paintRange($('#explode')); applyExplode(); }
     slice.enable(true);
     $('#section-dock').classList.remove('hidden');
     buildSlicePanel();
@@ -845,6 +853,7 @@ function buildSlicePanel() {
   };
   slice.onUpdate = updateLabels;
   updateLabels();
+  paintRanges(modePanel);
   posInput.addEventListener('input', () => slice.setPosition(+posInput.value));
   $('#slice-slab').addEventListener('input', (e) => {
     slice.set({ slab: +e.target.value });
@@ -883,6 +892,7 @@ function buildXrayPanel() {
   bind('#x-exp', 'exposure', '#xv-exp', (v) => v.toFixed(3));
   bind('#x-con', 'contrast', '#xv-con', (v) => v.toFixed(2));
   bind('#x-sh', 'sharpen', '#xv-sh', (v) => v.toFixed(2));
+  paintRanges(modePanel);
   $('#x-inv').addEventListener('change', (e) => { p.invert = e.target.checked; viewer.requestRender(); });
   $('#x-hl').addEventListener('change', (e) => { p.highlight = e.target.checked; viewer.requestRender(); });
 }
@@ -907,6 +917,29 @@ $('#color-scheme').addEventListener('change', (e) => {
   viewer.requestRender();
   if (slice.enabled) sectionView.draw();
 });
+// ---------------------------------------------------------------- theme
+const darkMQ = window.matchMedia('(prefers-color-scheme: dark)');
+function applyTheme(pref) {
+  const theme = pref === 'auto' ? (darkMQ.matches ? 'dark' : 'light') : pref;
+  document.documentElement.dataset.theme = theme;
+  const cs = getComputedStyle(document.documentElement);
+  const v = (n) => cs.getPropertyValue(n).trim();
+  viewer.setBackdrop(v('--scene-top'), v('--scene-bottom'), v('--scene-glow'));
+  document.querySelector('meta[name=theme-color]').content = v('--bg');
+  if (slice.enabled) sectionView.draw();
+}
+let themePref = 'dark';
+try { themePref = localStorage.getItem('theme') || 'dark'; } catch { /* storage unavailable */ }
+$('#theme').value = themePref;
+applyTheme(themePref);
+$('#theme').addEventListener('change', (e) => {
+  themePref = e.target.value;
+  try { localStorage.setItem('theme', themePref); } catch { /* storage unavailable */ }
+  applyTheme(themePref);
+});
+darkMQ.addEventListener('change', () => { if (themePref === 'auto') applyTheme(themePref); });
+paintRanges();
+
 $('#btn-screenshot').addEventListener('click', () => {
   viewer.render();
   const a = document.createElement('a');
@@ -951,7 +984,7 @@ window.addEventListener('keydown', (e) => {
     e.preventDefault();
     slice.setPosition(slice.position + (k === 'arrowup' ? 1 : -1) * (e.shiftKey ? 5 : 0.5));
     const i = $('#slice-pos');
-    if (i) i.value = slice.position;
+    if (i) { i.value = slice.position; paintRange(i); }
   } else if (k === '/') { e.preventDefault(); searchInput.focus(); }
 });
 

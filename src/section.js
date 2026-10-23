@@ -545,7 +545,7 @@ export class SectionView {
       c.width = Math.round(w * dpr); c.height = Math.round(h * dpr);
     }
     ctx.setTransform(1, 0, 0, 1, 0, 0);
-    ctx.fillStyle = this.palette === 'atlas' ? '#0b0f14' : '#000';
+    ctx.fillStyle = this.palette === 'atlas' ? (getComputedStyle(c).getPropertyValue('--section-bg').trim() || '#0b0f14') : '#000';
     ctx.fillRect(0, 0, c.width, c.height);
     this.#transform(ctx);
     const lw = 1 / (this.view.scale * dpr);
