@@ -5,7 +5,10 @@ import { AnatomyModel } from './model.js';
 import { XRay } from './xray.js';
 import { SectionView, AXES } from './section.js';
 import { SliceController } from './slice.js';
-import { setLayerOpacity, setColorScheme, getHighlight, clipPlanes, allMaterials, setWireframe } from './materials.js';
+import { setColorScheme, clipPlanes, setWireframe } from './materials.js';
+import { MODE } from './parts.js';
+import { Picker } from './picker.js';
+import { SEXES } from './model.js';
 import { LAYER_GROUPS, LAYER_COLORS, DEFAULT_VISIBLE, TISSUES, VIEW_PRESETS, MUSCLE_FUNCTION_COLORS } from './palette.js';
 import { getDescription } from './descriptions.js';
 import { buildTree } from './tree.js';
@@ -30,6 +33,7 @@ const sectionView = new SectionView($('#section-canvas'), {
   },
 });
 const slice = new SliceController(viewer, model, sectionView);
+const picker = new Picker(viewer, model);
 
 const state = {
   mode: 'normal',
@@ -46,26 +50,29 @@ const state = {
 // ---------------------------------------------------------------- loading
 async function init() {
   await model.loadMeta();
+  model.setSex(initialSex());
   buildLayerPanel();
+  updateSexUI();
   tree.build();
   const order = Object.keys(model.layers).sort((a, b) => (DEFAULT_VISIBLE.has(b) ? 1 : 0) - (DEFAULT_VISIBLE.has(a) ? 1 : 0));
   for (const k of order) model.layers[k].visible = DEFAULT_VISIBLE.has(k);
-  const total = order.reduce((s, k) => s + (model.layers[k].bytes || 1), 0);
+  const total = order.reduce((s, k) => s + (model.layers[k].bytes[model.sex] || 1), 0);
   let done = 0;
   const progress = () => {
     let loaded = 0;
     for (const k of order) {
       const l = model.layers[k];
-      loaded += (l.loaded ? 1 : l.progress || 0) * (l.bytes || 1);
+      const done = model.isLoaded(k);
+      loaded += (done ? 1 : l.progress || 0) * (l.bytes[model.sex] || 1);
       const ui = state.layerUI[k];
-      if (ui) ui.bar.style.width = `${(l.loaded ? 1 : l.progress || 0) * 100}%`;
+      if (ui) ui.bar.style.width = `${(done ? 1 : l.progress || 0) * 100}%`;
     }
     $('#loading-bar').style.width = `${(loaded / total) * 100}%`;
   };
   // Load visible layers first (in parallel), then the rest in the background.
   const loadOne = async (k) => {
     $('#loading-detail').textContent = `${model.layers[k].label}…`;
-    await model.loadLayer(k, progress);
+    await model.loadLayer(k, model.sex, progress);
     done++;
     progress();
     onLayerLoaded(k);
@@ -83,10 +90,9 @@ async function init() {
 
 function onLayerLoaded(k) {
   const l = model.layers[k];
-  l.group.visible = l.visible;
+  l.group.visible = l.visible && l.opacity > 0.01;
   const ui = state.layerUI[k];
-  if (ui) ui.progressRow.classList.add('hidden');
-  if (xray.enabled) xray.applyMaterials();
+  if (ui && model.isLoaded(k)) ui.progressRow.classList.add('hidden');
   applyExplode();
   refreshHighlights();
   tree.refresh();
@@ -96,7 +102,7 @@ function onLayerLoaded(k) {
 
 function computeBounds() {
   const box = new THREE.Box3();
-  for (const s of model.structures) if (s?.root && s.layer !== 'references') box.union(s.box);
+  for (const s of model.structures) if (s && model.geo(s) && s.layer !== 'references') box.union(model.geo(s).box);
   if (!box.isEmpty()) slice.setBounds(box);
 }
 
@@ -109,7 +115,9 @@ function buildLayerPanel() {
   mk('Show all', () => setLayers(Object.keys(model.layers).filter((k) => k !== 'references' && k !== 'attachments')));
   mk('Hide all', () => setLayers([]));
   mk('Default', () => setLayers([...DEFAULT_VISIBLE]));
-  host.append(actions);
+  const sexRow = el('div', 'sex-row', `<span>Body</span><div class="seg">${Object.entries(SEXES).map(([k, v]) => `<button data-sex="${k}">${v}</button>`).join('')}</div>`);
+  sexRow.querySelectorAll('button').forEach((b) => (b.onclick = () => setSex(b.dataset.sex)));
+  host.append(sexRow, actions);
   for (const g of LAYER_GROUPS) {
     host.append(el('div', 'layer-group-title', g.label));
     for (const k of g.layers) {
@@ -121,7 +129,7 @@ function buildLayerPanel() {
       const dot = el('span', 'dot');
       dot.style.background = LAYER_COLORS[k];
       const name = el('span', 'name', esc(l.label));
-      const count = el('span', 'count', l.count.toLocaleString());
+      const count = el('span', 'count', '');
       const range = el('input', 'opacity');
       range.type = 'range'; range.min = 0; range.max = 1; range.step = 0.01; range.value = 1;
       range.title = 'Opacity';
@@ -135,12 +143,10 @@ function buildLayerPanel() {
       });
       cb.addEventListener('change', () => setLayerVisible(k, cb.checked));
       range.addEventListener('input', () => {
-        l.opacity = +range.value;
-        setLayerOpacity(k, l.opacity);
-        l.group.visible = l.visible && l.opacity > 0.01;
+        setLayerOpacityUI(k, +range.value);
         viewer.requestRender();
       });
-      state.layerUI[k] = { cb, range, bar: progressRow.firstChild, progressRow };
+      state.layerUI[k] = { row, cb, range, count, bar: progressRow.firstChild, progressRow };
     }
   }
 }
@@ -156,20 +162,28 @@ function setLayerVisible(k, on, batch = false) {
   l.visible = on;
   l.group.visible = on && l.opacity > 0.01;
   if (state.layerUI[k]) state.layerUI[k].cb.checked = on;
-  if (on && !l.loaded) model.loadLayer(k).then(() => onLayerLoaded(k));
+  if (on && !model.isLoaded(k)) {
+    state.layerUI[k]?.progressRow.classList.remove('hidden');
+    model.loadLayer(k, model.sex, () => {
+      const ui = state.layerUI[k];
+      if (ui) ui.bar.style.width = `${(l.progress || 0) * 100}%`;
+    }).then(() => onLayerLoaded(k));
+  }
   if (!batch) afterVisibilityChange();
 }
 
 function setLayerOpacityUI(k, v) {
   const l = model.layers[k];
   l.opacity = v;
-  setLayerOpacity(k, v);
+  l.mats.layerOpacity.value = v;
   l.group.visible = l.visible && v > 0.01;
+  model.updatePasses(state.fade && state.selection.length > 0);
   if (state.layerUI[k]) state.layerUI[k].range.value = v;
 }
 
 function afterVisibilityChange() {
   hideTooltip();
+  refreshHighlights();
   tree.refresh();
   if (slice.enabled) slice.recomputeSection();
   viewer.requestRender();
@@ -182,7 +196,6 @@ const tree = buildTree($('#tab-tree'), model, {
   onToggle: (structures, show) => {
     for (const s of structures) {
       s.hidden = !show;
-      if (s.root) s.root.visible = show;
       if (show && !model.layers[s.layer].visible) setLayerVisible(s.layer, true, true);
     }
     afterVisibilityChange();
@@ -193,17 +206,14 @@ const tree = buildTree($('#tab-tree'), model, {
 // ---------------------------------------------------------------- selection
 function refreshHighlights() {
   const sel = new Set(state.selection);
-  const fade = state.fade && sel.size > 0;
-  for (const m of model.meshes) {
-    const s = m.userData.structure;
-    if (xray.enabled) continue;
-    let mat = m.userData.baseMaterial;
-    if (sel.has(s)) mat = getHighlight(mat, 'select');
-    else if (state.hover === s) mat = getHighlight(mat, fade ? 'ghost' : 'hover');
-    else if (fade) mat = getHighlight(mat, 'ghost');
-    m.material = mat;
-  }
-  xray.setSelected(state.selection);
+  const fade = state.fade && sel.size > 0 && !xray.enabled;
+  model.refreshState((s) => {
+    if (sel.has(s)) return MODE.select;
+    if (fade) return MODE.ghost;
+    if (state.hover === s && !xray.enabled) return MODE.hover;
+    return MODE.normal;
+  });
+  model.updatePasses(fade);
   sectionView.selected = sel;
   if (slice.enabled) sectionView.draw();
   viewer.requestRender();
@@ -223,7 +233,7 @@ function select(structures, { add = false, focus = false, point = null } = {}) {
   state.selectionPoint = point;
   if (focus) state.fade = true;
   for (const s of state.selection) {
-    if (s.hidden) { s.hidden = false; if (s.root) s.root.visible = true; }
+    if (s.hidden) s.hidden = false;
     if (!model.layers[s.layer].visible) setLayerVisible(s.layer, true, true);
   }
   refreshHighlights();
@@ -254,7 +264,7 @@ function selectGroup(path) {
 
 function focusSelection() {
   const box = new THREE.Box3();
-  for (const s of state.selection) if (s.root) box.union(s.box.clone().translate(s.root.position));
+  for (const s of state.selection) { const g = model.geo(s); if (g) box.union(g.box.clone().translate(s.offset)); }
   if (box.isEmpty()) return;
   viewer.frameBox(box);
 }
@@ -271,7 +281,7 @@ function clearSelection() {
 }
 
 function hideSelection() {
-  for (const s of state.selection) { s.hidden = true; if (s.root) s.root.visible = false; }
+  for (const s of state.selection) s.hidden = true;
   clearSelection();
   afterVisibilityChange();
 }
@@ -282,7 +292,6 @@ function isolateSelection() {
   for (const s of model.structures) {
     if (!s) continue;
     s.hidden = !keep.has(s);
-    if (s.root) s.root.visible = !s.hidden;
   }
   afterVisibilityChange();
   focusSelection();
@@ -292,7 +301,6 @@ function showAll() {
   for (const s of model.structures) {
     if (!s) continue;
     s.hidden = false;
-    if (s.root) s.root.visible = true;
   }
   afterVisibilityChange();
 }
@@ -375,10 +383,16 @@ function renderInfo() {
   const token = (renderInfo.token = (renderInfo.token || 0) + 1);
   const target = $('#desc');
   if (!descName) { target.innerHTML = ''; return; }
-  getDescription(descName).then((d) => {
+  getDescription(descName).then(async (d) => {
     if (token !== renderInfo.token) return;
-    if (!d && single?.ref) return getDescription(single.ref).then((d2) => show(d2, single.ref));
-    show(d);
+    if (d) return show(d);
+    // Fall back to the muscle (for attachments) or the nearest named parent group.
+    for (const alt of [single?.ref, ...(single ? [...single.path].reverse() : [])]) {
+      if (!alt) continue;
+      const d2 = await getDescription(alt);
+      if (d2) return show(d2, alt);
+    }
+    show(null);
   });
   function show(d, aboutName) {
     if (token !== renderInfo.token) return;
@@ -398,7 +412,7 @@ let searchIndex = null;
 function buildSearchIndex() {
   const groups = new Map();
   for (const s of model.structures) {
-    if (!s) continue;
+    if (!s || !model.inBody(s)) continue;
     for (let i = 1; i <= s.path.length; i++) {
       const key = s.path.slice(0, i).join('›');
       if (!groups.has(key)) groups.set(key, s.path.slice(0, i));
@@ -406,7 +420,7 @@ function buildSearchIndex() {
   }
   searchIndex = [
     ...[...groups.values()].map((p) => ({ type: 'group', path: p, text: p[p.length - 1].toLowerCase() })),
-    ...model.structures.filter(Boolean).map((s) => ({ type: 's', s, text: (s.name + ' ' + (s.side === 'l' ? 'left' : s.side === 'r' ? 'right' : '')).toLowerCase() })),
+    ...model.structures.filter((s) => s && model.inBody(s)).map((s) => ({ type: 's', s, text: (s.name + ' ' + (s.side === 'l' ? 'left' : s.side === 'r' ? 'right' : '')).toLowerCase() })),
   ];
 }
 let searchActive = 0;
@@ -546,17 +560,17 @@ canvas.addEventListener('pointerup', (e) => {
     return;
   }
   lastTap = { t: now, x: e.clientX, y: e.clientY };
-  const hit = viewer.pick(e.clientX, e.clientY, model.visibleMeshes(), clipPlanes);
-  if (hit) select([hit.object.userData.structure], { add: e.shiftKey, point: hit.point.clone() });
+  const hit = picker.pick(e.clientX, e.clientY);
+  if (hit) select([hit.structure], { add: e.shiftKey, point: hit.point.clone() });
   else if (!e.shiftKey) clearSelection();
 });
 canvas.addEventListener('dblclick', (e) => { if (lastPointerType === 'mouse') focusAt(e); });
 function focusAt(e) {
-  const hit = viewer.pick(e.clientX, e.clientY, model.visibleMeshes(), clipPlanes);
+  const hit = picker.pick(e.clientX, e.clientY);
   if (hit) {
-    select([hit.object.userData.structure], { point: hit.point.clone() });
-    const s = hit.object.userData.structure;
-    const box = s.box.clone().translate(s.root.position);
+    select([hit.structure], { point: hit.point.clone() });
+    const s = hit.structure;
+    const box = model.geo(s).box.clone().translate(s.offset);
     const size = box.getSize(new THREE.Vector3()).length();
     const dir = viewer.camera.position.clone().sub(viewer.controls.target).normalize();
     viewer.flyTo(hit.point, hit.point.clone().addScaledVector(dir, Math.max(size * 1.4, 12)));
@@ -571,8 +585,8 @@ canvas.addEventListener('pointermove', (e) => {
 canvas.addEventListener('pointerleave', () => { clearTimeout(hoverTimer); setHover(null); hideTooltip(); });
 
 function doHover(e) {
-  const hit = viewer.pick(e.clientX, e.clientY, model.visibleMeshes(), clipPlanes);
-  const s = hit?.object.userData.structure || null;
+  const hit = picker.pick(e.clientX, e.clientY);
+  const s = hit?.structure || null;
   setHover(s);
   if (s) {
     const rect = $('#stage').getBoundingClientRect();
@@ -601,11 +615,12 @@ viewer.renderHooks.push({
     let p = state.selectionPoint;
     if (!p) {
       const s = sel[0];
-      if (!s?.root) { pin.classList.add('hidden'); return; }
-      p = s.center.clone().add(s.root.position);
+      const g = s && model.geo(s);
+      if (!g) { pin.classList.add('hidden'); return; }
+      p = g.center.clone().add(s.offset);
       if (state.selectedGroup) {
         const box = new THREE.Box3();
-        for (const x of sel) if (x.root) box.union(x.box);
+        for (const x of sel) if (model.geo(x)) box.union(model.geo(x).box);
         p = box.getCenter(new THREE.Vector3());
       }
     }
@@ -621,9 +636,62 @@ viewer.renderHooks.push({
 // ---------------------------------------------------------------- deep links
 function updateHash() {
   const sel = state.selection;
-  const h = state.selectedGroup ? 'group=' + encodeURIComponent(state.selectedGroup.join('/'))
-    : sel.length === 1 ? 's=' + encodeURIComponent(sel[0].label) : '';
+  const p = new URLSearchParams();
+  if (model.sex === 'f') p.set('sex', 'f');
+  if (state.selectedGroup) p.set('group', state.selectedGroup.join('/'));
+  else if (sel.length === 1) p.set('s', sel[0].label);
+  const h = p.toString();
   history.replaceState(null, '', h ? '#' + h : location.pathname + location.search);
+}
+
+// ---------------------------------------------------------------- body (sex)
+function initialSex() {
+  const fromHash = new URLSearchParams(location.hash.slice(1)).get('sex');
+  let stored = null;
+  try { stored = localStorage.getItem('sex'); } catch { /* storage unavailable */ }
+  const s = fromHash || stored;
+  return s === 'f' ? 'f' : 'm';
+}
+
+function updateSexUI() {
+  document.querySelectorAll('[data-sex]').forEach((b) => b.classList.toggle('active', b.dataset.sex === model.sex));
+  for (const [k, ui] of Object.entries(state.layerUI)) {
+    const n = model.layers[k].counts[model.sex] || 0;
+    ui.count.textContent = n.toLocaleString();
+    ui.row.classList.toggle('hidden', n === 0);
+  }
+}
+
+async function setSex(sex) {
+  if (sex === model.sex) return;
+  model.setSex(sex);
+  try { localStorage.setItem('sex', sex); } catch { /* storage unavailable */ }
+  state.selection = state.selection.filter((s) => model.inBody(s));
+  if (state.hover && !model.inBody(state.hover)) state.hover = null;
+  searchIndex = null;
+  if (searchInput.value) runSearch();
+  updateSexUI();
+  tree.build();
+  const pending = Object.values(model.layers).filter((l) => l.visible && !model.isLoaded(l.key));
+  if (pending.length) {
+    $('#loading').classList.remove('hidden');
+    $('#loading-bar').style.width = '0%';
+    let done = 0;
+    await Promise.all(pending.map((l) => model.loadLayer(l.key, sex, () => {}).then(() => {
+      done++;
+      $('#loading-detail').textContent = `${SEXES[sex]} body · ${l.label}`;
+      $('#loading-bar').style.width = `${(done / pending.length) * 100}%`;
+      onLayerLoaded(l.key);
+    })));
+    $('#loading').classList.add('hidden');
+  }
+  computeBounds();
+  applyExplode();
+  refreshHighlights();
+  renderInfo();
+  updateHash();
+  if (slice.enabled) slice.recomputeSection();
+  viewer.requestRender();
 }
 
 async function applyHash() {
@@ -646,8 +714,10 @@ async function applyHash() {
 function applyExplode() {
   const k = state.explode;
   for (const s of model.structures) {
-    if (!s?.root) continue;
-    s.root.position.set(s.center.x * k * 1.6, (s.center.y - BODY_CENTER.y) * k * 0.35, s.center.z * k * 2.2);
+    const g = s && model.geo(s);
+    if (!g) continue;
+    s.offset.set(g.center.x * k * 1.6, (g.center.y - BODY_CENTER.y) * k * 0.35, g.center.z * k * 2.2);
+    for (const p of s.parts) model.store.setOffset(p.id, s.offset.x, s.offset.y, s.offset.z);
   }
   viewer.requestRender();
 }
@@ -698,6 +768,7 @@ function setMode(mode) {
   document.querySelectorAll('#modes button').forEach((b) => b.classList.toggle('active', b.dataset.mode === mode));
   if (prev === 'xray') {
     xray.enable(false);
+    refreshHighlights();
     if (savedLayers) {
       setLayers(savedLayers.visible);
       for (const [k, v] of Object.entries(savedLayers.opacity)) setLayerOpacityUI(k, v);
@@ -718,6 +789,7 @@ function setMode(mode) {
     setLayers(VIEW_PRESETS.xray);
     for (const k of Object.keys(model.layers)) setLayerOpacityUI(k, 1);
     xray.enable(true);
+    refreshHighlights();
     buildXrayPanel();
     if (viewer.camera.position.distanceTo(viewer.controls.target) < 150) viewer.resetView();
   }
@@ -812,7 +884,7 @@ function buildXrayPanel() {
   bind('#x-con', 'contrast', '#xv-con', (v) => v.toFixed(2));
   bind('#x-sh', 'sharpen', '#xv-sh', (v) => v.toFixed(2));
   $('#x-inv').addEventListener('change', (e) => { p.invert = e.target.checked; viewer.requestRender(); });
-  $('#x-hl').addEventListener('change', (e) => { p.highlight = e.target.checked; xray.applyMaterials(); viewer.requestRender(); });
+  $('#x-hl').addEventListener('change', (e) => { p.highlight = e.target.checked; viewer.requestRender(); });
 }
 
 document.querySelectorAll('#modes button').forEach((b) => (b.onclick = () => setMode(b.dataset.mode)));
@@ -829,6 +901,8 @@ $('#section-expand').addEventListener('click', () => {
 // ---------------------------------------------------------------- misc tools
 $('#color-scheme').addEventListener('change', (e) => {
   setColorScheme(e.target.value);
+  model.refreshAppearance();
+  for (const it of sectionView.items) delete it.hex;
   if (e.target.value === 'function' && !model.layers.muscles.visible) setLayerVisible('muscles', true);
   viewer.requestRender();
   if (slice.enabled) sectionView.draw();
@@ -881,7 +955,7 @@ window.addEventListener('keydown', (e) => {
   } else if (k === '/') { e.preventDefault(); searchInput.focus(); }
 });
 
-window.__app = { viewer, model, xray, slice, select, setMode, setLayers, state, allMaterials };
+window.__app = { viewer, model, xray, slice, picker, select, setMode, setLayers, setSex, state };
 
 init().catch((err) => {
   console.error(err);

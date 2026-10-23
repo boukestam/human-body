@@ -56,8 +56,6 @@ export class Viewer {
     this.viewHelper.center = this.controls.target;
     this.viewHelper.setLabels('L', 'S', 'A');
 
-    this.raycaster = new THREE.Raycaster();
-    this.raycaster.firstHitOnly = false;
     this.needsRender = true;
     this.renderHooks = [];
     this.renderOverride = null;
@@ -167,27 +165,6 @@ export class Viewer {
 
   resetView() {
     this.flyTo(BODY_CENTER, this.homePosition());
-  }
-
-  pick(clientX, clientY, meshes, clipPlanes = []) {
-    const rect = this.renderer.domElement.getBoundingClientRect();
-    const ndc = new THREE.Vector2(((clientX - rect.left) / rect.width) * 2 - 1, -((clientY - rect.top) / rect.height) * 2 + 1);
-    this.raycaster.setFromCamera(ndc, this.camera);
-    const ray = this.raycaster.ray;
-    const sphere = new THREE.Sphere();
-    const candidates = [];
-    for (const m of meshes) {
-      if (m.material.opacity < 0.05) continue;
-      sphere.copy(m.geometry.boundingSphere).applyMatrix4(m.matrixWorld);
-      if (!ray.intersectsSphere(sphere)) continue;
-      if (!m.geometry.boundsTree) m.geometry.computeBoundsTree();
-      candidates.push(m);
-    }
-    const hits = this.raycaster.intersectObjects(candidates, false);
-    for (const h of hits) {
-      if (clipPlanes.every((p) => p.distanceToPoint(h.point) >= -1e-3)) return h;
-    }
-    return null;
   }
 
   projectToScreen(v) {

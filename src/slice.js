@@ -118,9 +118,9 @@ export class SliceController {
     if (!this.enabled) return;
     // The skin outline is always used for the body silhouette, even when hidden.
     const hull = [];
-    const skin = this.model.layers.skin;
-    if (skin?.loaded) for (const s of skin.structures) for (const m of s.meshes) if (m.userData.tissue === 'skin') hull.push(m);
-    const items = computeSection(this.model.visibleMeshes(), this.axis, this.position, hull);
+    const m = this.model;
+    if (m.isLoaded('skin')) for (const s of m.layers.skin.structures) if (m.inBody(s)) for (const p of s.parts) if (p.tissue === 'skin') hull.push(p);
+    const items = computeSection(m.visibleParts(), m.sex, this.axis, this.position, hull);
     this.section.setItems(items, this.axis);
   }
 
@@ -128,11 +128,11 @@ export class SliceController {
   vertebralLevel() {
     if (this.axis !== 'transverse') return '';
     const y = this.position;
-    const verts = this.model.layers.skeleton?.structures.filter((s) => /^(Vertebra [CTL]\d+|Atlas|Axis|Sacrum|Coccyx)/.test(s.name) && s.root);
+    const verts = this.model.layers.skeleton?.structures.filter((s) => /^(Vertebra [CTL]\d+|Atlas|Axis|Sacrum|Coccyx)/.test(s.name) && this.model.geo(s));
     if (!verts?.length) return '';
     let best = null, bestD = Infinity;
     for (const s of verts) {
-      const d = Math.abs(s.center.y - y);
+      const d = Math.abs(this.model.geo(s).center.y - y);
       if (d < bestD) { bestD = d; best = s; }
     }
     if (!best || bestD > 6) return '';

@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { TISSUES } from './palette.js';
+import { partAppearance } from './materials.js';
 
 // Exact planar cross-sections of the visible meshes, drawn as a 2D atlas /
 // CT / MRI-style image.
@@ -11,42 +12,52 @@ export const AXES = {
   sagittal: { normal: new THREE.Vector3(1, 0, 0), u: new THREE.Vector3(0, 0, -1), v: new THREE.Vector3(0, 1, 0), label: 'Sagittal' },
 };
 
-export function computeSection(meshes, axisKey, position, hullMeshes = []) {
-  const set = new Set(meshes);
-  for (const m of hullMeshes) if (!set.has(m)) meshes.push(m);
+// parts: visible parts with geometry ranges for `sex`; hullParts: skin parts
+// always used for the body outline.
+export function computeSection(parts, sex, axisKey, position, hullParts = []) {
+  const set = new Set(parts);
+  const all = [...parts, ...hullParts.filter((p) => !set.has(p))];
   const axis = AXES[axisKey];
   const n = axis.normal, U = axis.u, V = axis.v;
   const comp = n.x ? 'x' : n.y ? 'y' : 'z';
+  const ci = comp === 'x' ? 0 : comp === 'y' ? 1 : 2;
   const items = [];
   const skinChains = [];
-  for (const mesh of meshes) {
-    const box = mesh.geometry.boundingBox;
-    const off = mesh.parent?.position || { x: 0, y: 0, z: 0 };
-    if (box.min[comp] + off[comp] > position || box.max[comp] + off[comp] < position) continue;
-    const pos = mesh.geometry.attributes.position.array;
-    const index = mesh.geometry.index.array;
-    const vcount = pos.length / 3;
-    const ci = comp === 'x' ? 0 : comp === 'y' ? 1 : 2;
-    const p0 = position - off[comp];
-    const d = new Float32Array(vcount);
-    for (let i = 0; i < vcount; i++) d[i] = pos[i * 3 + ci] - p0;
+  for (const part of all) {
+    const r = part.ranges[sex];
+    if (!r) continue;
+    const off = part.structure.offset;
+    if (r.box.min[comp] + off[comp] > position || r.box.max[comp] + off[comp] < position) continue;
+    const { array: A, stride, start, scale, offset } = r.decode;
+    const v0 = r.vStart, vc = r.vCount;
+    // World positions of this part's vertices.
+    const pos = new Float32Array(vc * 3);
+    for (let i = 0; i < vc; i++) {
+      const b = start + (v0 + i) * stride;
+      pos[i * 3] = A[b] * scale[0] + offset[0] + off.x;
+      pos[i * 3 + 1] = A[b + 1] * scale[1] + offset[1] + off.y;
+      pos[i * 3 + 2] = A[b + 2] * scale[2] + offset[2] + off.z;
+    }
+    const d = new Float32Array(vc);
+    for (let i = 0; i < vc; i++) d[i] = pos[i * 3 + ci] - position;
     const segA = [], segB = [], pts = [];
     const edgePoint = new Map();
     const pointFor = (a, b) => {
-      const key = a < b ? a * vcount + b : b * vcount + a;
+      const key = a < b ? a * vc + b : b * vc + a;
       let id = edgePoint.get(key);
       if (id !== undefined) return id;
       const t = d[a] / (d[a] - d[b]);
-      const x = pos[a * 3] + (pos[b * 3] - pos[a * 3]) * t + off.x;
-      const y = pos[a * 3 + 1] + (pos[b * 3 + 1] - pos[a * 3 + 1]) * t + off.y;
-      const z = pos[a * 3 + 2] + (pos[b * 3 + 2] - pos[a * 3 + 2]) * t + off.z;
+      const x = pos[a * 3] + (pos[b * 3] - pos[a * 3]) * t;
+      const y = pos[a * 3 + 1] + (pos[b * 3 + 1] - pos[a * 3 + 1]) * t;
+      const z = pos[a * 3 + 2] + (pos[b * 3 + 2] - pos[a * 3 + 2]) * t;
       id = pts.length / 2;
       pts.push(x * U.x + y * U.y + z * U.z, x * V.x + y * V.y + z * V.z);
       edgePoint.set(key, id);
       return id;
     };
-    for (let t = 0; t < index.length; t += 3) {
-      const a = index[t], b = index[t + 1], c = index[t + 2];
+    const index = r.index;
+    for (let t = r.iStart; t < r.iStart + r.iCount; t += 3) {
+      const a = index[t] - v0, b = index[t + 1] - v0, c = index[t + 2] - v0;
       const sa = d[a] >= 0, sb = d[b] >= 0, sc = d[c] >= 0;
       if (sa === sb && sb === sc) continue;
       let p, q;
@@ -57,21 +68,21 @@ export function computeSection(meshes, axisKey, position, hullMeshes = []) {
     }
     if (!segA.length) continue;
     const loops = chain(segA, segB, pts);
-    const tissue = mesh.userData.tissue;
+    const tissue = part.tissue;
     if (tissue === 'skin') {
       for (const l of loops) skinChains.push(l);
       continue;
     }
-    if (tissue === 'skinInner' || tissue === 'hair') continue;
+    if (tissue === 'skinInner' || tissue === 'hair' || !set.has(part)) continue;
     let area = 0;
     for (const l of loops) area += Math.abs(polyArea(l.pts));
-    items.push({ mesh, structure: mesh.userData.structure, tissue, loops, area });
+    items.push({ part, structure: part.structure, tissue, loops, area });
   }
   if (skinChains.length) {
     const body = joinChains(skinChains);
     let area = 0;
     for (const l of body) area += Math.abs(polyArea(l.pts));
-    items.push({ mesh: null, structure: null, tissue: 'body', loops: body, area: area * 1.0001, isBody: true });
+    items.push({ part: null, structure: null, tissue: 'body', loops: body, area: area * 1.0001, isBody: true });
   }
   items.sort((a, b) => b.area - a.area);
   return items;
@@ -326,7 +337,8 @@ export class SectionView {
     const t = item.tissue;
     if (this.palette === 'atlas') {
       if (item.isBody) return '#e7c3a4';
-      return '#' + item.mesh.userData.baseMaterial.color.getHexString();
+      item.hex ||= '#' + partAppearance(item.structure, item.tissue).color.getHexString();
+      return item.hex;
     }
     const key = this.palette === 'ct' ? 'ct' : 'mri';
     let g = item.isBody ? (key === 'ct' ? 0.3 : 0.88) : TISSUES[t]?.[key] ?? 0.5;

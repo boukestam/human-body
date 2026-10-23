@@ -132,6 +132,9 @@ button.menu-row:active, button.menu-row:hover { background: rgba(255, 255, 255, 
 #right { display: none; }
 
 /* layers */
+.sex-row { display: flex; align-items: center; gap: 10px; padding: 4px 6px 10px; }
+.sex-row > span { color: var(--muted); font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.6px; }
+.sex-row .seg { flex: 1; }
 .layer-actions { display: flex; gap: 6px; padding: 2px 4px 8px; }
 .layer-actions button, .btn { background: #1a2330; border: 1px solid var(--line-2); border-radius: 9px; min-height: 36px; padding: 0 12px; cursor: pointer; font-size: 13px; }
 .layer-actions button:active, .btn:active, .btn:hover { border-color: var(--accent); }

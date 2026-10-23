@@ -12,8 +12,9 @@ export function buildTree(host, model, { onSelectStructure, onSelectGroup, onTog
 
   function build() {
     root = { name: '', path: [], children: new Map(), structures: [], all: [] };
+    open.clear();
     for (const s of model.structures) {
-      if (!s) continue;
+      if (!s || !model.inBody(s)) continue;
       let node = root;
       node.all.push(s);
       for (const p of s.path) {

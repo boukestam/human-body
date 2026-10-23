@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { TISSUES } from './palette.js';
 import { clipPlanes } from './materials.js';
+import { PART_VERTEX_PARS } from './parts.js';
 
 const HULL_OFFSET = 100;
 
@@ -28,44 +29,7 @@ export class XRay {
     this.target = new THREE.WebGLRenderTarget(1, 1, rtOpts);
     this.hullTarget = new THREE.WebGLRenderTarget(1, 1, rtOpts);
     this.refDepth = { value: 300 };
-    this.materials = new Map();
-    this.selectedSet = new Set();
-
-    const clipVert = /* glsl */`
-      #include <clipping_planes_pars_vertex>
-      varying float vDepth;
-      void main() {
-        vec4 mvPosition = modelViewMatrix * vec4(position, 1.0);
-        vDepth = -mvPosition.z;
-        gl_Position = projectionMatrix * mvPosition;
-        #include <clipping_planes_vertex>
-      }`;
-    this.clipVert = clipVert;
-
-    this.hullMaterial = new THREE.ShaderMaterial({
-      uniforms: { uRef: this.refDepth },
-      vertexShader: clipVert,
-      fragmentShader: /* glsl */`
-        #include <clipping_planes_pars_fragment>
-        uniform float uRef;
-        varying float vDepth;
-        void main() {
-          #include <clipping_planes_fragment>
-          float d = vDepth - uRef;
-          gl_FragColor = vec4(${HULL_OFFSET.toFixed(1)} + d, ${HULL_OFFSET.toFixed(1)} - d, 0.0, 0.0);
-        }`,
-      side: THREE.DoubleSide,
-      depthTest: false,
-      depthWrite: false,
-      transparent: true,
-      blending: THREE.CustomBlending,
-      blendEquation: THREE.MaxEquation,
-      blendSrc: THREE.OneFactor,
-      blendDst: THREE.OneFactor,
-      blendEquationAlpha: THREE.MaxEquation,
-      clipping: true,
-      clippingPlanes: clipPlanes,
-    });
+    this.highlight = { value: 1 };
 
     this.quad = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), new THREE.ShaderMaterial({
       uniforms: {
@@ -120,116 +84,123 @@ export class XRay {
     this.quadCamera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
   }
 
-  // channel: 0 = tissue (R), 1 = skin hull (B), -1 = nothing
-  materialFor(tissue, selected, sign = 1, sheet = false, channel = 0) {
-    const key = `${tissue}|${selected ? 1 : 0}|${sign}|${sheet ? 1 : 0}|${channel}`;
-    let m = this.materials.get(key);
-    if (m) return m;
-    const density = channel === 1 ? sign : (TISSUES[tissue]?.density ?? 0.1) * sign;
-    m = new THREE.ShaderMaterial({
-      uniforms: {
-        uDensity: { value: channel < 0 ? 0 : density },
-        uRef: this.refDepth,
-        uSel: { value: selected ? 1 : 0 },
-        uSheet: { value: sheet ? 1 : 0 },
-        uChannel: { value: channel },
-      },
-      vertexShader: this.clipVert,
-      fragmentShader: /* glsl */`
-        #include <clipping_planes_pars_fragment>
-        uniform float uDensity, uRef, uSel, uSheet, uChannel;
-        varying float vDepth;
-        void main() {
-          #include <clipping_planes_fragment>
-          // Closed surfaces integrate thickness; open ones act as thin sheets.
-          float d = uSheet > 0.5 ? 0.35 : (vDepth - uRef) * (gl_FrontFacing ? -1.0 : 1.0);
-          float v = d * uDensity;
-          gl_FragColor = uChannel > 0.5 ? vec4(0.0, v * uSel, v, 0.0) : vec4(v, d * uSel, 0.0, 0.0);
-        }`,
+  // Accumulation material: density-weighted signed depth per fragment.
+  #makeMaterials() {
+    const vert = (extra) => /* glsl */`
+      #include <clipping_planes_pars_vertex>
+      ${PART_VERTEX_PARS}
+      varying float vDepth;
+      varying vec4 vXray;
+      varying float vSel;
+      void main() {
+        ivec2 pc = partCoord(partId);
+        vec4 st = texelFetch(tPartState, pc, 0);
+        vXray = texelFetch(tPartXray, pc, 0);
+        vSel = st.g > 1.5 && st.g < 2.5 ? 1.0 : 0.0;
+        vec4 w = modelMatrix * vec4(position, 1.0);
+        w.xyz += texelFetch(tPartOffset, pc, 0).xyz;
+        vec4 mvPosition = viewMatrix * w;
+        vDepth = -mvPosition.z;
+        gl_Position = projectionMatrix * mvPosition;
+        ${extra}
+        if (st.r < 0.5) gl_Position = vec4(0.0, 0.0, 2.0, 1.0);
+        #include <clipping_planes_vertex>
+      }`;
+    const common = {
       side: THREE.DoubleSide,
       depthTest: false,
       depthWrite: false,
       transparent: true,
       blending: THREE.CustomBlending,
-      blendEquation: THREE.AddEquation,
       blendSrc: THREE.OneFactor,
       blendDst: THREE.OneFactor,
-      blendEquationAlpha: THREE.AddEquation,
       blendSrcAlpha: THREE.OneFactor,
       blendDstAlpha: THREE.OneFactor,
       clipping: true,
       clippingPlanes: clipPlanes,
+    };
+    this.accumMaterial = new THREE.ShaderMaterial({
+      ...common,
+      uniforms: { ...this.model.store.uniforms, uRef: this.refDepth, uHighlight: this.highlight },
+      vertexShader: vert(''),
+      fragmentShader: /* glsl */`
+        #include <clipping_planes_pars_fragment>
+        uniform float uRef, uHighlight;
+        varying float vDepth;
+        varying vec4 vXray;
+        varying float vSel;
+        void main() {
+          #include <clipping_planes_fragment>
+          if (vXray.b < -0.5) discard;
+          // Closed surfaces integrate thickness; open ones act as thin sheets.
+          float d = vXray.g > 0.5 ? 0.35 : (vDepth - uRef) * (gl_FrontFacing ? -1.0 : 1.0);
+          float v = d * vXray.r;
+          float sel = vSel * uHighlight;
+          gl_FragColor = vXray.b > 0.5 ? vec4(0.0, v * sel, v, 0.0) : vec4(v, d * sel, 0.0, 0.0);
+        }`,
+      blendEquation: THREE.AddEquation,
+      blendEquationAlpha: THREE.AddEquation,
     });
-    this.materials.set(key, m);
-    return m;
-  }
-
-  setSelected(structures) {
-    this.selectedSet = new Set(structures);
-    if (this.enabled) this.applyMaterials();
-  }
-
-  applyMaterials() {
-    for (const m of this.model.meshes) {
-      const s = m.userData.structure;
-      if (!s.root) continue;
-      const sel = this.params.highlight && this.selectedSet.has(s);
-      const t = m.userData.tissue;
-      if (t === 'skin') {
-        m.material = this.materialFor(t, sel, s.sign, false, 1);
-        continue;
-      }
-      if (t === 'skinInner') {
-        m.material = this.materialFor(t, false, 1, false, -1);
-        continue;
-      }
-      const sheet = s.open > 0.04;
-      m.material = this.materialFor(sheet ? t : s.xrayTissue, sel, sheet ? 1 : s.sign, sheet);
-    }
+    // Nearest / farthest skin depth (max blending), robust to gaps in the skin.
+    this.hullMaterial = new THREE.ShaderMaterial({
+      ...common,
+      uniforms: { ...this.model.store.uniforms, uRef: this.refDepth },
+      vertexShader: vert('if (vXray.b < 0.5) gl_Position = vec4(0.0, 0.0, 2.0, 1.0);'),
+      fragmentShader: /* glsl */`
+        #include <clipping_planes_pars_fragment>
+        uniform float uRef;
+        varying float vDepth;
+        varying vec4 vXray;
+        varying float vSel;
+        void main() {
+          #include <clipping_planes_fragment>
+          float d = vDepth - uRef;
+          gl_FragColor = vec4(${HULL_OFFSET.toFixed(1)} + d, ${HULL_OFFSET.toFixed(1)} - d, 0.0, 0.0);
+        }`,
+      blendEquation: THREE.MaxEquation,
+      blendEquationAlpha: THREE.MaxEquation,
+    });
   }
 
   enable(on) {
     this.enabled = on;
-    if (on) {
-      this.applyMaterials();
-      this.viewer.renderOverride = (r, scene, camera) => this.render(r, scene, camera);
-    } else {
-      this.viewer.renderOverride = null;
-    }
+    if (on && !this.accumMaterial) this.#makeMaterials();
+    this.viewer.renderOverride = on ? (r, scene, camera) => this.render(r, scene, camera) : null;
     this.viewer.requestRender();
+  }
+
+  // Draws only the opaque copy of every layer mesh (each part exactly once).
+  #withLayerMeshes(scene, fn) {
+    const hidden = [];
+    for (const c of scene.children) if (c.userData.noXray && c.visible) { c.visible = false; hidden.push(c); }
+    this.model.withSinglePass(fn);
+    hidden.forEach((o) => (o.visible = true));
   }
 
   render(r, scene, camera) {
     const size = r.getDrawingBufferSize(new THREE.Vector2());
     for (const t of [this.target, this.hullTarget]) if (t.width !== size.x || t.height !== size.y) t.setSize(size.x, size.y);
     this.refDepth.value = camera.position.distanceTo(this.viewer.controls.target);
-    const hidden = [];
-    for (const c of scene.children) if (c.userData.noXray && c.visible) { c.visible = false; hidden.push(c); }
-
+    this.highlight.value = this.params.highlight ? 1 : 0;
+    const prevOverride = scene.overrideMaterial;
     r.setClearColor(0x000000, 0);
-    r.setRenderTarget(this.target);
-    r.clear(true, false, false);
-    r.render(scene, camera);
-
-    // Nearest / farthest skin depth (max blending).
-    r.setRenderTarget(this.hullTarget);
-    r.clear(true, false, false);
-    const skin = this.model.layers.skin;
-    if (skin?.loaded && skin.group.visible) {
-      const vis = this.model.root.children.map((g) => g.visible);
-      this.model.root.children.forEach((g) => (g.visible = g === skin.group));
-      const swapped = [];
-      for (const s of skin.structures) for (const m of s.meshes) {
-        if (m.userData.tissue !== 'skin') { if (m.visible) { m.visible = false; swapped.push([m, null]); } continue; }
-        swapped.push([m, m.material]);
-        m.material = this.hullMaterial;
-      }
+    this.#withLayerMeshes(scene, () => {
+      r.setRenderTarget(this.target);
+      r.clear(true, false, false);
+      scene.overrideMaterial = this.accumMaterial;
       r.render(scene, camera);
-      for (const [m, mat] of swapped) { if (mat) m.material = mat; else m.visible = true; }
-      this.model.root.children.forEach((g, i) => (g.visible = vis[i]));
-    }
-
-    hidden.forEach((c) => (c.visible = true));
+      r.setRenderTarget(this.hullTarget);
+      r.clear(true, false, false);
+      const skin = this.model.layers.skin;
+      if (skin?.visible && this.model.isLoaded('skin')) {
+        const vis = this.model.root.children.map((g) => g.visible);
+        this.model.root.children.forEach((g) => (g.visible = g === skin.group));
+        scene.overrideMaterial = this.hullMaterial;
+        r.render(scene, camera);
+        this.model.root.children.forEach((g, i) => (g.visible = vis[i]));
+      }
+    });
+    scene.overrideMaterial = prevOverride;
     r.setRenderTarget(null);
     const u = this.quad.material.uniforms;
     u.uTexel.value.set(1 / size.x, 1 / size.y);
