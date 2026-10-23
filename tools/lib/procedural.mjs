@@ -479,3 +479,26 @@ function femalePubicHair(S, { mx, symLow, G, V0, frontSkinZ }) {
   }
   return slab(outer, inner, NU, NV, (i) => i < NU - 1).mesh();
 }
+
+// Moves the vertices of `mesh` that lie inside or behind any of the `blockers`
+// (indexed meshes), seen from `centre(p)`, to just in front of them. Used to
+// seat the breasts from the reference body on the warped chest wall.
+export function pushOutOf(mesh, blockers, centre, clearance = 0.15, reach = 10) {
+  const S = soupToBVH(blockers.map((m) => indexedToSoup(m.positions, m.indices)));
+  const p = new Float32Array(mesh.positions);
+  const q = V(0, 0, 0);
+  const ray = new THREE.Ray();
+  let moved = 0;
+  for (let i = 0; i < p.length; i += 3) {
+    q.set(p[i], p[i + 1], p[i + 2]);
+    const d = q.clone().sub(centre(q)).normalize();
+    ray.set(q, d);
+    let far = -1;
+    for (const h of S.bvh.raycast(ray, THREE.DoubleSide)) if (h.distance < reach && h.distance > far) far = h.distance;
+    if (far < 0) continue;
+    q.addScaledVector(d, far + clearance);
+    p[i] = q.x; p[i + 1] = q.y; p[i + 2] = q.z;
+    moved++;
+  }
+  return { mesh: { positions: p, indices: mesh.indices }, moved };
+}

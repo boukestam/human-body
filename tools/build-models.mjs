@@ -13,7 +13,7 @@ import { extractZAnatomy } from './lib/za.mjs';
 import { loadHRA } from './lib/hra.mjs';
 import { buildFemaleWarp } from './lib/female.mjs';
 import { registerGut } from './lib/supplement.mjs';
-import { headFrame, femaleHair, femaleEyebrow, femalePelvis } from './lib/procedural.mjs';
+import { headFrame, femaleHair, femaleEyebrow, femalePelvis, pushOutOf } from './lib/procedural.mjs';
 import { LAYERS } from './lib/layers.mjs';
 import { FEMALE_STRUCTURES, GUT_STRUCTURES, MALE_ONLY, DESC_ALIASES } from './lib/hra-catalog.mjs';
 import { weld, fromIndexed, simplify, compact, structureStats, ready as meshReady } from './lib/mesh.mjs';
@@ -165,6 +165,30 @@ for (const e of entries) {
   for (const sex of ['m', 'f']) if (parts[sex].length) meshes[sex].set(e.id, parts[sex]);
 }
 log(`geometry processed (${elapsed()})`);
+
+// ------------------------------------------------------------------ female breasts
+// The breasts come from the reference body but the chest wall is the warped
+// male one: seat them on it by pushing whatever lies inside the chest wall out.
+{
+  const CHEST = /pectoralis major|serratus anterior|external abdominal oblique|rectus abdominis|intercostal|^(first|second|third|fourth|fifth|sixth|seventh|eighth|ninth|tenth) rib|costal cartilage|sternum|body of sternum|xiphoid|lobe of (left|right) lung|liver|diaphragm/i;
+  const blockers = [];
+  for (const e of entries) if (e.src === 'za' && CHEST.test(e.name)) for (const p of meshes.f.get(e.id) || []) if (p.tissue !== 'tendon') blockers.push(p.mesh);
+  const lungs = entries.filter((e) => /lobe of (left|right) lung/i.test(e.name)).flatMap((e) => (meshes.f.get(e.id) || []).map((p) => p.mesh.positions));
+  let cz = 0, n = 0;
+  for (const a of lungs) for (let i = 2; i < a.length; i += 3) { cz += a[i]; n++; }
+  cz /= n;
+  const midX = femaleNodes.get('VH_F_skin') ? (() => { let lo = Infinity, hi = -Infinity; const a = femaleNodes.get('VH_F_skin').positions; for (let i = 0; i < a.length; i += 3) { lo = Math.min(lo, a[i]); hi = Math.max(hi, a[i]); } return (lo + hi) / 2; })() : 0;
+  let total = 0;
+  for (const e of entries) {
+    if (e.src !== 'hra' || !e.path.includes('Breast')) continue;
+    for (const p of meshes.f.get(e.id) || []) {
+      const r = pushOutOf(p.mesh, blockers, (q) => new THREE.Vector3(midX + (q.x - midX) * 0.35, q.y, cz));
+      p.mesh = r.mesh;
+      total += r.moved;
+    }
+  }
+  log(`breasts seated on the chest wall: ${total} vertices moved (${elapsed()})`);
+}
 
 // ------------------------------------------------------------------ female skin
 // The female skin layer uses the real female skin surface, split into the

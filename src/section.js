@@ -18,74 +18,91 @@ export function computeSection(parts, sex, axisKey, position, hullParts = []) {
   const set = new Set(parts);
   const all = [...parts, ...hullParts.filter((p) => !set.has(p))];
   const axis = AXES[axisKey];
-  const n = axis.normal, U = axis.u, V = axis.v;
+  const n = axis.normal;
   const comp = n.x ? 'x' : n.y ? 'y' : 'z';
-  const ci = comp === 'x' ? 0 : comp === 'y' ? 1 : 2;
   const items = [];
   const skinChains = [];
+  const skinParts = [];
   for (const part of all) {
-    const r = part.ranges[sex];
-    if (!r) continue;
-    const off = part.structure.offset;
-    if (r.box.min[comp] + off[comp] > position || r.box.max[comp] + off[comp] < position) continue;
-    const { array: A, stride, start, scale, offset } = r.decode;
-    const v0 = r.vStart, vc = r.vCount;
-    // World positions of this part's vertices.
-    const pos = new Float32Array(vc * 3);
-    for (let i = 0; i < vc; i++) {
-      const b = start + (v0 + i) * stride;
-      pos[i * 3] = A[b] * scale[0] + offset[0] + off.x;
-      pos[i * 3 + 1] = A[b + 1] * scale[1] + offset[1] + off.y;
-      pos[i * 3 + 2] = A[b + 2] * scale[2] + offset[2] + off.z;
-    }
-    const d = new Float32Array(vc);
-    for (let i = 0; i < vc; i++) d[i] = pos[i * 3 + ci] - position;
-    const segA = [], segB = [], pts = [];
-    const edgePoint = new Map();
-    const pointFor = (a, b) => {
-      const key = a < b ? a * vc + b : b * vc + a;
-      let id = edgePoint.get(key);
-      if (id !== undefined) return id;
-      const t = d[a] / (d[a] - d[b]);
-      const x = pos[a * 3] + (pos[b * 3] - pos[a * 3]) * t;
-      const y = pos[a * 3 + 1] + (pos[b * 3 + 1] - pos[a * 3 + 1]) * t;
-      const z = pos[a * 3 + 2] + (pos[b * 3 + 2] - pos[a * 3 + 2]) * t;
-      id = pts.length / 2;
-      pts.push(x * U.x + y * U.y + z * U.z, x * V.x + y * V.y + z * V.z);
-      edgePoint.set(key, id);
-      return id;
-    };
-    const index = r.index;
-    for (let t = r.iStart; t < r.iStart + r.iCount; t += 3) {
-      const a = index[t] - v0, b = index[t + 1] - v0, c = index[t + 2] - v0;
-      const sa = d[a] >= 0, sb = d[b] >= 0, sc = d[c] >= 0;
-      if (sa === sb && sb === sc) continue;
-      let p, q;
-      if (sa === sb) { p = pointFor(b, c); q = pointFor(c, a); }
-      else if (sa === sc) { p = pointFor(a, b); q = pointFor(b, c); }
-      else { p = pointFor(c, a); q = pointFor(a, b); }
-      if (p !== q) { segA.push(p); segB.push(q); }
-    }
-    if (!segA.length) continue;
-    const loops = chain(segA, segB, pts);
     const tissue = part.tissue;
+    if (tissue !== 'skin' && (tissue === 'skinInner' || tissue === 'hair' || !set.has(part))) continue;
+    // Skin is cut a hair off the plane so mesh seams lying in it (the midline
+    // of a symmetric body) do not break the outline.
+    const loops = slicePart(part, sex, axis, comp, tissue === 'skin' ? position + 0.02 : position);
     if (tissue === 'skin') {
-      for (const l of loops) skinChains.push(l);
+      skinParts.push(part);
+      if (loops) for (const l of loops) skinChains.push(l);
       continue;
     }
-    if (tissue === 'skinInner' || tissue === 'hair' || !set.has(part)) continue;
+    if (!loops) continue;
+    if (SHEETS.has(tissue) || part.structure.layer === 'fasciae') markOpen(loops);
     let area = 0;
-    for (const l of loops) area += Math.abs(polyArea(l.pts));
+    for (const l of loops) if (!l.open) area += Math.abs(polyArea(l.pts));
     items.push({ part, structure: part.structure, tissue, loops, area });
   }
   if (skinChains.length) {
-    const body = joinChains(skinChains);
+    let body = joinChains(skinChains);
+    if (body.some((l) => l.gap > 1)) {
+      // Patchy skin: also cut it just either side of the plane to bridge seams.
+      const chains = [...skinChains];
+      for (const dp of [-0.25, 0.25]) for (const part of skinParts) for (const l of slicePart(part, sex, axis, comp, position + dp) || []) chains.push(l);
+      body = rasterBody(chains);
+    }
     let area = 0;
     for (const l of body) area += Math.abs(polyArea(l.pts));
     items.push({ part: null, structure: null, tissue: 'body', loops: body, area: area * 1.0001, isBody: true });
   }
   items.sort((a, b) => b.area - a.area);
   return items;
+}
+
+// Cross-section loops of one part with the plane at `position` (null if none).
+function slicePart(part, sex, axis, comp, position) {
+  const r = part.ranges[sex];
+  if (!r) return null;
+  const off = part.structure.offset;
+  if (r.box.min[comp] + off[comp] > position || r.box.max[comp] + off[comp] < position) return null;
+  const U = axis.u, V = axis.v;
+  const ci = comp === 'x' ? 0 : comp === 'y' ? 1 : 2;
+  const { array: A, stride, start, scale, offset } = r.decode;
+  const v0 = r.vStart, vc = r.vCount;
+  // World positions of this part's vertices.
+  const pos = new Float32Array(vc * 3);
+  for (let i = 0; i < vc; i++) {
+    const b = start + (v0 + i) * stride;
+    pos[i * 3] = A[b] * scale[0] + offset[0] + off.x;
+    pos[i * 3 + 1] = A[b + 1] * scale[1] + offset[1] + off.y;
+    pos[i * 3 + 2] = A[b + 2] * scale[2] + offset[2] + off.z;
+  }
+  const d = new Float32Array(vc);
+  for (let i = 0; i < vc; i++) d[i] = pos[i * 3 + ci] - position;
+  const segA = [], segB = [], pts = [];
+  const edgePoint = new Map();
+  const pointFor = (a, b) => {
+    const key = a < b ? a * vc + b : b * vc + a;
+    let id = edgePoint.get(key);
+    if (id !== undefined) return id;
+    const t = d[a] / (d[a] - d[b]);
+    const x = pos[a * 3] + (pos[b * 3] - pos[a * 3]) * t;
+    const y = pos[a * 3 + 1] + (pos[b * 3 + 1] - pos[a * 3 + 1]) * t;
+    const z = pos[a * 3 + 2] + (pos[b * 3 + 2] - pos[a * 3 + 2]) * t;
+    id = pts.length / 2;
+    pts.push(x * U.x + y * U.y + z * U.z, x * V.x + y * V.y + z * V.z);
+    edgePoint.set(key, id);
+    return id;
+  };
+  const index = r.index;
+  for (let t = r.iStart; t < r.iStart + r.iCount; t += 3) {
+    const a = index[t] - v0, b = index[t + 1] - v0, c = index[t + 2] - v0;
+    const sa = d[a] >= 0, sb = d[b] >= 0, sc = d[c] >= 0;
+    if (sa === sb && sb === sc) continue;
+    let p, q;
+    if (sa === sb) { p = pointFor(b, c); q = pointFor(c, a); }
+    else if (sa === sc) { p = pointFor(a, b); q = pointFor(b, c); }
+    else { p = pointFor(c, a); q = pointFor(a, b); }
+    if (p !== q) { segA.push(p); segB.push(q); }
+  }
+  return segA.length ? chain(segA, segB, pts) : null;
 }
 
 function chain(segA, segB, pts) {
@@ -120,6 +137,22 @@ function chain(segA, segB, pts) {
   return loops;
 }
 
+// Tissues modelled as thin sheets rather than closed volumes.
+const SHEETS = new Set(['fascia', 'capsule', 'peritoneum']);
+
+// Flags chains of sheet-like structures that are really open, as opposed to
+// outlines with a small gap from an imperfect mesh.
+function markOpen(loops) {
+  for (const l of loops) {
+    if (l.closed) continue;
+    const a = l.pts, n = a.length;
+    let len = 0;
+    for (let i = 2; i < n; i += 2) len += Math.hypot(a[i] - a[i - 2], a[i + 1] - a[i - 1]);
+    const gap = Math.hypot(a[n - 2] - a[0], a[n - 1] - a[1]);
+    l.open = gap > Math.max(0.6, 0.12 * len);
+  }
+}
+
 // Joins open boundary chains from separate skin patches into closed outlines.
 function joinChains(chains, tol = 2.5) {
   const closed = chains.filter((c) => c.closed);
@@ -129,7 +162,8 @@ function joinChains(chains, tol = 2.5) {
     let cur = open.pop();
     for (;;) {
       const ex = cur[cur.length - 2], ey = cur[cur.length - 1];
-      let best = -1, bestD = tol * tol, rev = false;
+      // Closing onto its own start beats bridging to another patch.
+      let best = -1, bestD = Math.min(tol * tol, (cur[0] - ex) ** 2 + (cur[1] - ey) ** 2), rev = false;
       for (let i = 0; i < open.length; i++) {
         const c = open[i];
         const d0 = (c[0] - ex) ** 2 + (c[1] - ey) ** 2;
@@ -142,9 +176,95 @@ function joinChains(chains, tol = 2.5) {
       if (rev) { const r = []; for (let i = c.length - 2; i >= 0; i -= 2) r.push(c[i], c[i + 1]); c = r; }
       cur = cur.concat(c);
     }
-    if (cur.length >= 6) result.push({ pts: new Float32Array(cur), closed: true });
+    if (cur.length >= 6) result.push({ pts: new Float32Array(cur), closed: true, gap: Math.hypot(cur[0] - cur[cur.length - 2], cur[1] - cur[cur.length - 1]) });
   }
   return result;
+}
+
+// Body silhouette from skin outlines that do not join up end to end (skin made
+// of overlapping patches): the outlines are drawn as thick lines on a grid, the
+// outside is flood-filled, and the filled body is shrunk back by the line
+// thickness (a morphological closing) and traced with marching squares.
+function rasterBody(chains, R = 0.6) {
+  let minU = Infinity, minV = Infinity, maxU = -Infinity, maxV = -Infinity;
+  for (const c of chains) for (let i = 0; i < c.pts.length; i += 2) {
+    const u = c.pts[i], v = c.pts[i + 1];
+    if (u < minU) minU = u; if (u > maxU) maxU = u; if (v < minV) minV = v; if (v > maxV) maxV = v;
+  }
+  const res = Math.max(0.12, Math.max(maxU - minU, maxV - minV) / 700);
+  const pad = R * 2 + res * 2;
+  const u0 = minU - pad, v0 = minV - pad;
+  const W = Math.ceil((maxU - minU + 2 * pad) / res) + 1, H = Math.ceil((maxV - minV + 2 * pad) / res) + 1;
+  const wall = new Uint8Array(W * H);
+  const rc = Math.ceil(R / res);
+  const disk = [];
+  for (let dy = -rc; dy <= rc; dy++) for (let dx = -rc; dx <= rc; dx++) if (dx * dx + dy * dy <= rc * rc) disk.push(dx + dy * W);
+  for (const c of chains) {
+    const a = c.pts;
+    for (let i = 2; i < a.length; i += 2) {
+      const len = Math.hypot(a[i] - a[i - 2], a[i + 1] - a[i - 1]);
+      const n = Math.max(1, Math.ceil(len / (res * 0.7)));
+      for (let k = 0; k <= n; k++) {
+        const t = k / n;
+        const x = Math.round((a[i - 2] + (a[i] - a[i - 2]) * t - u0) / res), y = Math.round((a[i - 1] + (a[i + 1] - a[i - 1]) * t - v0) / res);
+        const o = x + y * W;
+        for (const d of disk) wall[o + d] = 1;
+      }
+    }
+  }
+  // Flood-fill the outside from the border.
+  const outside = new Uint8Array(W * H);
+  const queue = new Int32Array(W * H);
+  let qh = 0, qt = 0;
+  const push = (i) => { if (!outside[i] && !wall[i]) { outside[i] = 1; queue[qt++] = i; } };
+  for (let x = 0; x < W; x++) { push(x); push(x + (H - 1) * W); }
+  for (let y = 0; y < H; y++) { push(y * W); push(W - 1 + y * W); }
+  while (qh < qt) {
+    const i = queue[qh++], x = i % W;
+    if (x > 0) push(i - 1);
+    if (x < W - 1) push(i + 1);
+    if (i >= W) push(i - W);
+    if (i < W * (H - 1)) push(i + W);
+  }
+  // Chamfer distance (in cells) from the outside.
+  const D = new Float32Array(W * H);
+  const BIG = 1e9;
+  for (let i = 0; i < W * H; i++) D[i] = outside[i] ? 0 : BIG;
+  const d1 = 1, d2 = Math.SQRT2;
+  for (let y = 1; y < H; y++) for (let x = 1; x < W - 1; x++) {
+    const i = x + y * W;
+    if (!D[i]) continue;
+    D[i] = Math.min(D[i], D[i - 1] + d1, D[i - W] + d1, D[i - W - 1] + d2, D[i - W + 1] + d2);
+  }
+  for (let y = H - 2; y >= 0; y--) for (let x = W - 2; x > 0; x--) {
+    const i = x + y * W;
+    if (!D[i]) continue;
+    D[i] = Math.min(D[i], D[i + 1] + d1, D[i + W] + d1, D[i + W + 1] + d2, D[i + W - 1] + d2);
+  }
+  // Marching squares at distance R.
+  const iso = R / res;
+  const segA = [], segB = [], pts = [];
+  const ids = new Map();
+  const point = (i, j) => {
+    const key = i < j ? i * W * H + j : j * W * H + i;
+    let id = ids.get(key);
+    if (id !== undefined) return id;
+    const t = (iso - D[i]) / (D[j] - D[i]);
+    const xi = i % W, yi = (i / W) | 0, xj = j % W, yj = (j / W) | 0;
+    id = pts.length / 2;
+    pts.push(u0 + (xi + (xj - xi) * t) * res, v0 + (yi + (yj - yi) * t) * res);
+    ids.set(key, id);
+    return id;
+  };
+  for (let y = 0; y < H - 1; y++) for (let x = 0; x < W - 1; x++) {
+    const a = x + y * W, b = a + 1, c = a + W + 1, d = a + W;
+    const k = (D[a] > iso ? 1 : 0) | (D[b] > iso ? 2 : 0) | (D[c] > iso ? 4 : 0) | (D[d] > iso ? 8 : 0);
+    if (k === 0 || k === 15) continue;
+    const e = [[a, b], [b, c], [c, d], [d, a]];
+    const edges = { 1: [[3, 0]], 2: [[0, 1]], 3: [[3, 1]], 4: [[1, 2]], 5: [[3, 0], [1, 2]], 6: [[0, 2]], 7: [[3, 2]], 8: [[2, 3]], 9: [[2, 0]], 10: [[0, 1], [2, 3]], 11: [[2, 1]], 12: [[1, 3]], 13: [[1, 0]], 14: [[0, 3]] }[k];
+    for (const [p, q] of edges) { segA.push(point(...e[p])); segB.push(point(...e[q])); }
+  }
+  return chain(segA, segB, pts).filter((l) => l.pts.length >= 8).map((l) => ({ pts: l.pts, closed: true }));
 }
 
 function polyArea(p) {
@@ -311,14 +431,24 @@ export class SectionView {
   #path(item) {
     if (item.path) return item.path;
     const p = new Path2D();
+    const line = new Path2D();
+    let lines = false;
     for (const l of item.loops) {
       const a = l.pts;
-      p.moveTo(a[0], a[1]);
-      for (let i = 2; i < a.length; i += 2) p.lineTo(a[i], a[i + 1]);
-      p.closePath();
+      const q = l.open ? line : p;
+      q.moveTo(a[0], a[1]);
+      for (let i = 2; i < a.length; i += 2) q.lineTo(a[i], a[i + 1]);
+      if (l.open) lines = true;
+      else p.closePath();
     }
     item.path = p;
+    item.linePath = lines ? line : null;
     return p;
+  }
+
+  // Line width (world units) for open, sheet-like cuts.
+  #sheetWidth() {
+    return Math.max(0.12, 1.6 / this.view.scale);
   }
 
   hitTest(x, y) {
@@ -329,6 +459,10 @@ export class SectionView {
       const it = this.items[i];
       if (it.isBody) continue;
       if (ctx.isPointInPath(this.#path(it), x * dpr, y * dpr, 'evenodd')) return it;
+      if (it.linePath) {
+        ctx.lineWidth = Math.max(this.#sheetWidth(), 6 / this.view.scale);
+        if (ctx.isPointInStroke(it.linePath, x * dpr, y * dpr)) return it;
+      }
     }
     return null;
   }
@@ -362,7 +496,16 @@ export class SectionView {
     for (const it of this.items) {
       const p = this.#path(it);
       ctx.fillStyle = this.colorOf(it);
-      ctx.fill(p, 'evenodd');
+      if (it.isBody) {
+        // The body silhouette is the union of the skin outlines.
+        for (const l of it.loops) {
+          const q = new Path2D();
+          q.moveTo(l.pts[0], l.pts[1]);
+          for (let i = 2; i < l.pts.length; i += 2) q.lineTo(l.pts[i], l.pts[i + 1]);
+          q.closePath();
+          ctx.fill(q, 'nonzero');
+        }
+      } else ctx.fill(p, 'evenodd');
       if (this.palette === 'atlas') {
         ctx.strokeStyle = 'rgba(0,0,0,0.35)';
         ctx.lineWidth = lw;
@@ -371,6 +514,12 @@ export class SectionView {
         ctx.strokeStyle = '#050505';
         ctx.lineWidth = lw * 3;
         ctx.stroke(p);
+      }
+      if (it.linePath) {
+        ctx.strokeStyle = ctx.fillStyle;
+        ctx.lineWidth = this.#sheetWidth();
+        ctx.lineJoin = 'round';
+        ctx.stroke(it.linePath);
       }
     }
     for (const it of this.items) {
@@ -382,6 +531,10 @@ export class SectionView {
       ctx.strokeStyle = sel ? '#38d0ff' : '#ffe680';
       ctx.lineWidth = lw * 2;
       ctx.stroke(p);
+      if (it.linePath) {
+        ctx.lineWidth = this.#sheetWidth() * 2;
+        ctx.stroke(it.linePath);
+      }
     }
     if (this.labels) this.#drawLabels(ctx, dpr);
     this.#drawOrientation(ctx, dpr, w, h);
@@ -403,7 +556,7 @@ export class SectionView {
       if (seen.has(it.structure)) continue;
       // centroid of the largest loop
       let best = null, bestA = 0;
-      for (const l of it.loops) { const a = Math.abs(polyArea(l.pts)); if (a > bestA) { bestA = a; best = l.pts; } }
+      for (const l of it.loops) { if (l.open) continue; const a = Math.abs(polyArea(l.pts)); if (a > bestA) { bestA = a; best = l.pts; } }
       if (!best) continue;
       let cx = 0, cy = 0;
       for (let i = 0; i < best.length; i += 2) { cx += best[i]; cy += best[i + 1]; }

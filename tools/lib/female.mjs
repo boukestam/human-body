@@ -251,6 +251,25 @@ export function buildFemaleWarp(z, fRaw, { log = console.log } = {}) {
     const fe = extremes(ff);
     extremes(zf).forEach((p, d) => add(p, fe[d]));
     add(centroid(zf), centroid(ff));
+    // Rings of rays along the foot, from the heel towards the toes.
+    const vecs = (a) => { const o = []; for (let i = 0; i < a.length; i += 3) o.push(V(a[i], a[i + 1], a[i + 2])); return o; };
+    const za = principalAxis(vecs(zf)), fa = principalAxis(vecs(ff));
+    if (za.dir.z < 0) za.dir.negate();
+    if (fa.dir.z < 0) fa.dir.negate();
+    const span = (pts, ax) => { let lo = Infinity, hi = -Infinity; for (let i = 0; i < pts.length; i += 3) { const t = (pts[i] - ax.center.x) * ax.dir.x + (pts[i + 1] - ax.center.y) * ax.dir.y + (pts[i + 2] - ax.center.z) * ax.dir.z; lo = Math.min(lo, t); hi = Math.max(hi, t); } return [lo, hi]; };
+    const [zl, zh2] = span(zf, za), [fl, fh2] = span(ff, fa);
+    const zu = perpendicular(za.dir, V(0, 1, 0)), zv = za.dir.clone().cross(zu);
+    const fu = perpendicular(fa.dir, V(0, 1, 0)), fv = fa.dir.clone().cross(fu);
+    for (let t = 0.12; t <= 0.9; t += 0.09) {
+      const zo = za.center.clone().addScaledVector(za.dir, zl + t * (zh2 - zl));
+      const fo = fa.center.clone().addScaledVector(fa.dir, fl + t * (fh2 - fl));
+      for (let a = 0; a < 360; a += 30) {
+        const th = (a * Math.PI) / 180;
+        const zd = zu.clone().multiplyScalar(Math.cos(th)).addScaledVector(zv, Math.sin(th));
+        const fd = fu.clone().multiplyScalar(Math.cos(th)).addScaledVector(fv, Math.sin(th));
+        add(cast(ZS, zo, zd, 10), cast(FS, fo, fd, 10));
+      }
+    }
   }
 
   // ------------------------------------------------------------- arms
@@ -281,9 +300,9 @@ export function buildFemaleWarp(z, fRaw, { log = console.log } = {}) {
     const zu = perpendicular(zdir, V(0, 0, 1)), zv = zdir.clone().cross(zu);
     const fu = perpendicular(fa.dir, V(0, 0, 1)), fv = fa.dir.clone().cross(fu);
     log(`arm ${sd}: shoulder ${zp.toArray().map((v) => v.toFixed(1))} -> ${fp.toArray().map((v) => v.toFixed(1))}, abduction diff ${(zdir.angleTo(fa.dir) * 180 / Math.PI).toFixed(1)}°`);
-    for (let t = 0.12; t <= 1.0; t += 0.055) {
+    for (let t = 0.12; t <= 1.0; t += 0.04) {
       const zo = zp.clone().addScaledVector(zdir, t * zLen), fo = fp.clone().addScaledVector(fa.dir, t * fLen);
-      for (let a = 0; a < 360; a += 30) {
+      for (let a = 0; a < 360; a += 24) {
         const th = (a * Math.PI) / 180;
         const zd = zu.clone().multiplyScalar(Math.cos(th)).addScaledVector(zv, Math.sin(th));
         const fd = fu.clone().multiplyScalar(Math.cos(th)).addScaledVector(fv, Math.sin(th));
@@ -327,7 +346,7 @@ export function buildFemaleWarp(z, fRaw, { log = console.log } = {}) {
     return n < 3 || dv[i].distanceTo(mean.multiplyScalar(1 / n)) < 6;
   });
   log(`landmarks: ${pairs.length} (${kept.length} kept), median displacement ${med.toFixed(1)} cm`);
-  const used = subsample(kept, 1400);
+  const used = subsample(kept, 1800);
   const fn = fitRBF(used.map((p) => p.src), used.map((p) => p.dst), 0.5);
   let err = 0;
   for (const p of kept) { const [x, y, zz] = fn(p.src.x, p.src.y, p.src.z); err += p.dst.distanceTo(V(x, y, zz)); }

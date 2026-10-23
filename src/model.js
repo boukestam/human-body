@@ -166,16 +166,24 @@ export class AnatomyModel {
     if (d.loaded || d.loading) return d.loading;
     const loader = new GLTFLoader();
     loader.setMeshoptDecoder(MeshoptDecoder);
-    d.loading = new Promise((resolve, reject) => {
-      loader.load(`${BASE}models/${sex}/${key}.glb`, (gltf) => {
-        this.#ingest(layer, sex, gltf.scene);
-        d.loaded = true;
-        resolve(layer);
-      }, (ev) => {
-        if (ev.total) layer.progress = ev.loaded / ev.total;
-        onProgress?.(layer);
-      }, reject);
-    });
+    const url = `${BASE}models/${sex}/${key}.glb`;
+    d.loading = (async () => {
+      // Retry dropped downloads (flaky mobile connections) before giving up.
+      for (let attempt = 0; ; attempt++) {
+        try {
+          const gltf = await loader.loadAsync(url, (ev) => {
+            if (ev.total) layer.progress = ev.loaded / ev.total;
+            onProgress?.(layer);
+          });
+          this.#ingest(layer, sex, gltf.scene);
+          d.loaded = true;
+          return layer;
+        } catch (err) {
+          if (attempt >= 2) { d.loading = null; throw err; }
+          await new Promise((r) => setTimeout(r, 800 * (attempt + 1)));
+        }
+      }
+    })();
     return d.loading;
   }
 
