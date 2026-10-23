@@ -502,3 +502,76 @@ export function pushOutOf(mesh, blockers, centre, clearance = 0.15, reach = 10) 
   }
   return { mesh: { positions: p, indices: mesh.indices }, moved };
 }
+
+// Occupancy grid of a set of (possibly leaky) meshes inside a box: each
+// horizontal slice is filled with even-odd scanlines, the same rule the 2D
+// cross-section view uses, so "inside" matches what a section shows.
+export function occupancy(meshes, box, res = 0.25) {
+  const nx = Math.ceil((box.max.x - box.min.x) / res), ny = Math.ceil((box.max.y - box.min.y) / res), nz = Math.ceil((box.max.z - box.min.z) / res);
+  const grid = new Uint8Array(nx * ny * nz);
+  for (const m of meshes) {
+    const p = m.positions, I = m.indices;
+    const mb = bbox(p);
+    const j0 = Math.max(0, Math.floor((mb.min.y - box.min.y) / res)), j1 = Math.min(ny - 1, Math.ceil((mb.max.y - box.min.y) / res));
+    for (let j = j0; j <= j1; j++) {
+      const y = box.min.y + (j + 0.5) * res;
+      const segs = [];
+      for (let t = 0; t < I.length; t += 3) {
+        const a = I[t] * 3, b = I[t + 1] * 3, c = I[t + 2] * 3;
+        const da = p[a + 1] - y, db = p[b + 1] - y, dc = p[c + 1] - y;
+        if ((da > 0 && db > 0 && dc > 0) || (da <= 0 && db <= 0 && dc <= 0)) continue;
+        const pts = [];
+        for (const [u, w, du, dw] of [[a, b, da, db], [b, c, db, dc], [c, a, dc, da]]) {
+          if ((du > 0) === (dw > 0)) continue;
+          const k = du / (du - dw);
+          pts.push(p[u] + (p[w] - p[u]) * k, p[u + 2] + (p[w + 2] - p[u + 2]) * k);
+        }
+        if (pts.length === 4) segs.push(pts);
+      }
+      if (!segs.length) continue;
+      for (let k = 0; k < nz; k++) {
+        const z = box.min.z + (k + 0.5) * res;
+        const xs = [];
+        for (const [x1, z1, x2, z2] of segs) if ((z1 > z) !== (z2 > z)) xs.push(x1 + ((z - z1) / (z2 - z1)) * (x2 - x1));
+        if (xs.length < 2) continue;
+        xs.sort((u, w) => u - w);
+        for (let q = 0; q + 1 < xs.length; q += 2) {
+          const i0 = Math.max(0, Math.ceil((xs[q] - box.min.x) / res - 0.5)), i1 = Math.min(nx - 1, Math.floor((xs[q + 1] - box.min.x) / res - 0.5));
+          for (let i = i0; i <= i1; i++) grid[i + nx * (j + ny * k)] = 1;
+        }
+      }
+    }
+  }
+  const at = (x, y, z) => {
+    const i = Math.floor((x - box.min.x) / res), j = Math.floor((y - box.min.y) / res), k = Math.floor((z - box.min.z) / res);
+    if (i < 0 || j < 0 || k < 0 || i >= nx || j >= ny || k >= nz) return 0;
+    return grid[i + nx * (j + ny * k)];
+  };
+  return { at, res };
+}
+
+// Rigid translation (searched on a grid within `maxShift`) that leaves the
+// fewest vertices of a group of meshes inside the `blockers`, with a small
+// penalty per cm moved so organs stay as close as possible to where they were
+// registered. The meshes keep their shape exactly.
+export function separateRigid(meshes, blockers, { maxShift = 2.5, step = 0.5, penalty = 0.01 } = {}) {
+  const pts = Float32Array.from(meshes.flatMap((m) => Array.from(m.positions)));
+  const occ = occupancy(blockers, bbox(pts).expandByScalar(maxShift + 1));
+  const buried = (tx, ty, tz) => { let c = 0; for (let i = 0; i < pts.length; i += 3) if (occ.at(pts[i] + tx, pts[i + 1] + ty, pts[i + 2] + tz)) c++; return c; };
+  const before = buried(0, 0, 0);
+  let best = { score: before, t: V(0, 0, 0), count: before };
+  const n = pts.length / 3;
+  for (let x = -maxShift; x <= maxShift + 1e-6; x += step) for (let y = -maxShift; y <= maxShift + 1e-6; y += step) for (let z = -maxShift; z <= maxShift + 1e-6; z += step) {
+    const d = Math.hypot(x, y, z);
+    if (d > maxShift + 1e-6) continue;
+    const c = buried(x, y, z);
+    const score = c + penalty * n * d;
+    if (score < best.score) best = { score, t: V(x, y, z), count: c };
+  }
+  const out = meshes.map((m) => {
+    const p = new Float32Array(m.positions);
+    for (let i = 0; i < p.length; i += 3) { p[i] += best.t.x; p[i + 1] += best.t.y; p[i + 2] += best.t.z; }
+    return { positions: p, indices: m.indices };
+  });
+  return { meshes: out, shift: best.t, before, after: best.count };
+}

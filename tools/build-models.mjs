@@ -13,7 +13,7 @@ import { extractZAnatomy } from './lib/za.mjs';
 import { loadHRA } from './lib/hra.mjs';
 import { buildFemaleWarp } from './lib/female.mjs';
 import { registerGut } from './lib/supplement.mjs';
-import { headFrame, femaleHair, femaleEyebrow, femalePelvis, pushOutOf } from './lib/procedural.mjs';
+import { headFrame, femaleHair, femaleEyebrow, femalePelvis, pushOutOf, separateRigid } from './lib/procedural.mjs';
 import { LAYERS } from './lib/layers.mjs';
 import { FEMALE_STRUCTURES, GUT_STRUCTURES, MALE_ONLY, DESC_ALIASES } from './lib/hra-catalog.mjs';
 import { weld, fromIndexed, simplify, compact, structureStats, ready as meshReady } from './lib/mesh.mjs';
@@ -165,6 +165,29 @@ for (const e of entries) {
   for (const sex of ['m', 'f']) if (parts[sex].length) meshes[sex].set(e.id, parts[sex]);
 }
 log(`geometry processed (${elapsed()})`);
+
+// ------------------------------------------------------------------ added gut segments
+// The registered caecum, ileum and rectum must not run into the bones, muscles
+// and organs around them.
+{
+  const AROUND = /^(rectus abdominis|transversus abdominis|internal abdominal oblique|external abdominal oblique|hip bone|sacrum|coccyx|femur|iliacus muscle|psoas major|psoas minor|gluteus (maximus|medius|minimus) muscle|piriformis muscle|obturator internus|levator ani|urinary bladder|uterus|body of uterus|fundus of uterus|vagina|ovary)/i;
+  for (const sex of ['m', 'f']) {
+    const blockers = [];
+    for (const e of entries) {
+      if (e.src === 'gut' || !AROUND.test(e.name)) continue;
+      for (const p of meshes[sex].get(e.id) || []) if (['bone', 'muscle', 'organ', 'intestine', 'uterus', 'ovary', 'mucosa'].includes(p.tissue)) blockers.push(p.mesh);
+    }
+    // The ileocaecal segments move together (they join each other); the rectum on its own.
+    for (const group of [['Caecum', 'Ileal orifice', 'Terminal ileum', 'Ileum'], ['Rectum']]) {
+      const parts = entries.filter((e) => e.src === 'gut' && group.includes(e.name)).flatMap((e) => meshes[sex].get(e.id) || []);
+      if (!parts.length) continue;
+      const r = separateRigid(parts.map((p) => p.mesh), blockers);
+      parts.forEach((p, k) => (p.mesh = r.meshes[k]));
+      log(`  ${sex} ${group[0]}: shifted ${r.shift.toArray().map((v) => v.toFixed(1))} cm, buried vertices ${r.before} -> ${r.after}`);
+    }
+  }
+  log(`gut collisions resolved (${elapsed()})`);
+}
 
 // ------------------------------------------------------------------ female breasts
 // The breasts come from the reference body but the chest wall is the warped

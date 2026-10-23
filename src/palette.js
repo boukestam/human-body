@@ -134,7 +134,8 @@ export const DEFAULT_VISIBLE = new Set([
 ]);
 
 // Structures hidden on start even when their layer is shown (they would cover others).
-export const DEFAULT_HIDDEN_NAMES = /^(spinal dura|falx cerebri|tentorium cerebelli|pleura|greater omentum)$/i;
+// Hidden at start: coverings, and subdivisions that coincide with a whole organ.
+export const DEFAULT_HIDDEN_NAMES = /^(spinal dura|falx cerebri|tentorium cerebelli|pleura|greater omentum|.* segment of liver \(\w+\))$/i;
 
 // Visible layers for each view preset.
 export const VIEW_PRESETS = {
